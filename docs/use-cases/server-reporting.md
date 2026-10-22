@@ -16,17 +16,17 @@ This recipe requires the API. The embedded documentation examples are local and 
 
 `createHttpSource({ baseUrl: '/api' })` expects these endpoints below its base URL:
 
-| Request                          | Contract                                                                             |
-| -------------------------------- | ------------------------------------------------------------------------------------ |
-| `GET /meta`                      | `{ rows, columns, revision, columnFormulas, editableColumns }`                       |
-| `GET /block?r0=…&r1=…&c0=…&c1=…` | Inclusive range; returns `{ range, revision, cells }`                                |
-| `POST /mutate`                   | `{ revision, mutation }`; returns current metadata; conflicting revision is HTTP 409 |
-| `GET /events`                    | SSE messages carrying updated metadata and revision                                  |
-| `POST /view-blocks`              | `{ view, ranges }`; returns `{ blocks, revision }`                                   |
-| `POST /view-query`               | `{ view }`; packed Uint32 row indexes, revision in `X-Sheet-Revision`                |
-| `POST /view-summary`             | `{ view, range }`; selection summary over the complete query result                  |
+| Request                          | Contract                                                                                                           |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `GET /meta`                      | `{ rows, columns, revision, columnFormulas, editableColumns }`                                                     |
+| `GET /block?r0=…&r1=…&c0=…&c1=…` | Inclusive range; returns `{ range, revision, cells }`                                                              |
+| `POST /mutate`                   | `{ revision, mutation: { kind: 'columns', columns } }`; returns current metadata; conflicting revision is HTTP 409 |
+| `GET /events`                    | SSE messages carrying updated metadata and revision                                                                |
+| `POST /view-blocks`              | `{ view, ranges }`; returns `{ blocks, revision }`                                                                 |
+| `POST /view-query`               | `{ view }`; packed Uint32 row indexes, revision in `X-Sheet-Revision`                                              |
+| `POST /view-summary`             | `{ view, range }`; selection summary over the complete query result                                                |
 
-Each cell record includes zero-based coordinates, original input, computed value and status. The implementation in `apps/server` is the executable protocol reference. Preserve the packed row-index encoding when replacing the server implementation.
+Each cell record includes zero-based coordinates, original input, computed value and status. `HTTP_ROUTES` and `REVISION_HEADER` from `@sheet/transport` name these paths and the header. The source validates responses with `parseRemoteMetadata`, `parseDataBlock`, `parseViewBlocks` and `parseSelectionSummary`; a server can validate request bodies with `parseMutationRequest` and `parseCellRange`. Error responses carry `{ error }`; HTTP 409 rejects with `SheetError` code `REVISION_CONFLICT`. The implementation in `apps/server` is the executable protocol reference. Preserve the packed row-index encoding when replacing the server implementation.
 
 Persisted views use a separate `HttpViewAdapter`: catalog `GET ?sourceId=…`, `GET /:viewId`, and `PUT /:viewId` with `{ state, expectedVersion }`. A missing view returns 404; a version conflict returns 409.
 

@@ -2,24 +2,25 @@ import { describe, expect, it } from 'vitest';
 import {
   FormulaEngine,
   EngineSession,
-  parseAddress,
   shiftFormula,
   decodeTSV,
   encodeTSV,
   pasteCells,
   copyRange,
   type CellInput,
+  type EngineOptions,
 } from '../packages/core/src/index';
+import { A1, a, cell, cells, range, rev } from './helpers';
 
-function engine(cells: Record<string, CellInput>, options = {}) {
+function engine(inputs: Record<string, CellInput>, options: Partial<EngineOptions> = {}) {
   return new FormulaEngine({
     rows: 100000,
     columns: 50,
-    cells: Object.entries(cells).map(([label, input]) => ({ ...parseAddress(label)!, input })),
+    cells: Object.entries(inputs).map(([label, input]) => ({ ...A1(label), input })),
     ...options,
   });
 }
-const at = (sheet: FormulaEngine, label: string) => sheet.value(parseAddress(label)!);
+const at = (sheet: FormulaEngine, label: string) => sheet.value(A1(label));
 describe('formula engine', () => {
   it('evaluates precedence, exponentiation, percentages, text and lazy IF', () => {
     const sheet = engine({
@@ -85,9 +86,9 @@ describe('formula engine', () => {
       ['A6', '#NUM!'],
       ['A7', '#ERROR!'],
       ['A8', '#DIV/0!'],
-    ])
+    ] as const)
       expect(at(sheet, label)).toMatchObject({ error });
-    sheet.apply({ cells: [{ row: 0, col: 1, input: 4 }] });
+    sheet.apply(cells(cell(0, 1, 4)));
     expect(at(sheet, 'C1')).toBe(5);
   });
   it('invalidates only cached dependents and stores a range as one dependency', () => {
@@ -102,7 +103,7 @@ describe('formula engine', () => {
     expect(at(sheet, 'D1')).toBe(9);
     expect(at(sheet, 'B2')).toBe(6);
     const before = sheet.evaluations;
-    sheet.apply({ cells: [{ row: 0, col: 0, input: 4 }] });
+    sheet.apply(cells(cell(0, 0, 4)));
     expect(at(sheet, 'B2')).toBe(6);
     expect(sheet.evaluations).toBe(before);
     expect(at(sheet, 'D1')).toBe(15);
@@ -116,7 +117,7 @@ describe('formula engine', () => {
     );
     expect(at(sheet, 'D1')).toBe(4);
     at(sheet, 'E1');
-    sheet.apply({ cells: [{ row: 0, col: 0, input: 10 }] });
+    sheet.apply(cells(cell(0, 0, 10)));
     expect(at(sheet, 'D1')).toBe(13);
     expect(sheet.stats.cachedFormulas).toBeLessThanOrEqual(2);
   });
@@ -126,7 +127,7 @@ describe('formula engine', () => {
       columns: 3,
       readInput: ({ row, col }) => (col === 0 ? row + 1 : null),
       columnFormulas: { 1: '=A1*2' },
-      cells: [{ row: 0, col: 2, input: '=SUM(A1:A1000000)' }],
+      cells: [cell(0, 2, '=SUM(A1:A1000000)')],
     });
     expect(at(sheet, 'C1')).toBe(500000500000);
     expect(at(sheet, 'B1000000')).toBe(2000000);
@@ -135,20 +136,10 @@ describe('formula engine', () => {
   it('validates a transaction atomically and checks revisions', () => {
     const sheet = engine({ A1: 1 });
     const session = new EngineSession(sheet);
-    expect(() =>
-      session.mutate(
-        {
-          cells: [
-            { row: 0, col: 0, input: 2 },
-            { row: -1, col: 0, input: 3 },
-          ],
-        },
-        0,
-      ),
-    ).toThrow();
+    expect(() => session.mutate(cells(cell(0, 0, 2), cell(-1, 0, 3)), rev(0))).toThrow();
     expect(at(sheet, 'A1')).toBe(1);
-    session.mutate({ cells: [{ row: 0, col: 0, input: 2 }] }, 0);
-    expect(() => session.mutate({ cells: [] }, 0)).toThrow('Revision conflict');
+    session.mutate(cells(cell(0, 0, 2)), rev(0));
+    expect(() => session.mutate(cells(), rev(0))).toThrow('Revision conflict');
   });
   it('shares identical absolute aggregates across a calculated column and invalidates them together', () => {
     const sheet = new FormulaEngine({
@@ -157,11 +148,11 @@ describe('formula engine', () => {
       readInput: ({ col }) => (col === 0 ? 1 : null),
       columnFormulas: { 1: '=SUM($A$1:$A$1000000)' },
     });
-    for (let row = 0; row < 64; row++) expect(sheet.value({ row, col: 1 })).toBe(1000000);
+    for (let row = 0; row < 64; row++) expect(sheet.value(a(row, 1))).toBe(1000000);
     expect(sheet.evaluations).toBe(1);
-    sheet.apply({ cells: [{ row: 999999, col: 0, input: 2 }] });
-    expect(sheet.value({ row: 0, col: 1 })).toBe(1000001);
-    expect(sheet.value({ row: 63, col: 1 })).toBe(1000001);
+    sheet.apply(cells(cell(999999, 0, 2)));
+    expect(sheet.value(a(0, 1))).toBe(1000001);
+    expect(sheet.value(a(63, 1))).toBe(1000001);
     expect(sheet.evaluations).toBe(2);
   });
 });
@@ -182,13 +173,13 @@ describe('clipboard', () => {
     ]);
   });
   it('copies values externally and relative formulas internally', () => {
-    const copy = copyRange({ start: { row: 0, col: 1 }, end: { row: 0, col: 1 } }, () => ({
+    const copy = copyRange(range(0, 1), () => ({
       input: '=A1+$A$1',
       value: 4,
       status: 'ready',
     }));
     expect(copy.tsv).toBe('4');
-    expect(pasteCells('4', { row: 2, col: 2 }, copy)[0].input).toBe('=B3+$A$1');
-    expect(pasteCells('5', { row: 2, col: 2 }, copy)[0].input).toBe(5);
+    expect(pasteCells('4', a(2, 2), copy)[0]?.input).toBe('=B3+$A$1');
+    expect(pasteCells('5', a(2, 2), copy)[0]?.input).toBe(5);
   });
 });

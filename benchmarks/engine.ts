@@ -2,7 +2,7 @@ import { performance } from 'node:perf_hooks';
 import { cpus, platform, release } from 'node:os';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { createSalesEngine } from '../apps/shared/sales';
-import { parseAddress } from '../packages/core/src/index';
+import { Address, CellRange, Revision } from '../packages/core/src/index';
 
 const scenarios = [];
 for (const rows of [100000, 1000000]) {
@@ -10,17 +10,17 @@ for (const rows of [100000, 1000000]) {
   const engine = createSalesEngine(rows);
   const createdMs = performance.now() - start;
   const first = performance.now();
-  engine.block({ start: { row: 0, col: 0 }, end: { row: 63, col: 15 } }, 0);
+  engine.block(CellRange.unsafe(0, 0, 63, 15), Revision.initial);
   const firstBlockMs = performance.now() - first;
-  engine.apply({ cells: [{ row: 0, col: 8, input: `=SUM(D1:D${rows})` }] });
+  engine.apply({ kind: 'cells', cells: [{ ...Address.of(0, 8), input: `=SUM(D1:D${rows})` }] });
   const sumStart = performance.now();
-  const total = engine.value(parseAddress('I1')!);
+  const total = engine.value(Address.of(0, 8));
   const aggregateMs = performance.now() - sumStart;
   const samples = [];
   for (let i = 0; i < 100; i++) {
     const before = performance.now();
-    engine.apply({ cells: [{ row: 0, col: 3, input: i + 1 }] });
-    engine.value(parseAddress('G1')!);
+    engine.apply({ kind: 'cells', cells: [{ ...Address.of(0, 3), input: i + 1 }] });
+    engine.value(Address.of(0, 6));
     samples.push(performance.now() - before);
   }
   samples.sort((a, b) => a - b);

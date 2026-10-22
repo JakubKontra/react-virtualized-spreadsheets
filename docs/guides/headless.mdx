@@ -1,0 +1,30 @@
+# Build your own renderer
+
+import CodeBlock from '@theme/CodeBlock';
+import source from '!!raw-loader!@site/../docs-examples/src/headless.tsx';
+
+Use `@sheet/react` when your product needs its own UI components. It provides virtual geometry, subscriptions, keyboard navigation and interaction props without requiring Tailwind or shadcn/ui.
+
+The host creates a store as described in [data sources](data-sources.md). This minimal renderer then adds an editable viewport. It is typechecked with the repository as `apps/docs-examples/src/headless.tsx`:
+
+<CodeBlock language="tsx" title="headless.tsx">
+  {source}
+</CodeBlock>
+
+This example covers basic editing in an unpinned view. It omits headers, frozen positioning, selection overlays, error UI and formula assistance. For a complete renderer, see `packages/ui/src/spreadsheet/Grid.tsx` and the [React API](../api/react.md).
+
+## The controller
+
+`useSpreadsheet` returns a `SpreadsheetController` grouped by concern: `layout` (virtual items and geometry), `edit` (the shared draft), `navigation` (select and scroll), `props` (prop getters), `gestures`, `formula` and `summary`. Virtual items carry branded indices: `row.index` is a `RowIndex` and `col.index` a `ColIndex`, so `{ row: row.index, col: col.index }` is already a visible `Address`. See [coordinates](coordinates.md) for the index types.
+
+## Keep interaction props together
+
+Attach `props.grid` to the scrolling, focusable element. Attach `props.cell(address)` to every cell. Keep the editor outside virtual rows so scrolling cannot unmount the draft. The example replaces the `style` returned by `props.cell`; merge it with your own styling instead if you want formula-reference and autofill highlights.
+
+`useCell(store, address)` subscribes to one cell. Avoid subscribing each cell to the full store snapshot. Keep column-width callbacks stable; changed widths invalidate geometry. For frozen rows and columns, position items with `layout.displayRow(index, start)` / `layout.displayColumn(index, start)` and layer the first `layout.frozenRows` / `layout.frozenColumns` items above scrolling cells. `layout.cellRect(address)` already includes frozen offsets.
+
+## Add product controls
+
+Use `props.formulaBar` for a synchronized formula input, `gestures` for header moves/resizes, and `props.fillHandle` with `fillPreview` for autofill. Await `edit.commit()` before actions that depend on a pending draft; it resolves `false` when the write failed. The renderer must surface `state.error`, connection status and loading state.
+
+The returned props include ARIA grid roles, counts and selection metadata. A custom renderer still needs visible focus, accessible control names and assistive-technology testing. The current project has not completed a cross-browser screen-reader audit.

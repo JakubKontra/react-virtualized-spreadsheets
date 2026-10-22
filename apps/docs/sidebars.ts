@@ -17,6 +17,7 @@ const sidebars: SidebarsConfig = {
       items: [
         'ui',
         'guides/headless',
+        'guides/coordinates',
         'guides/data-sources',
         'formulas',
         'guides/interactions',

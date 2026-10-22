@@ -9,7 +9,7 @@ Use the optional shadcn/ui renderer for a complete spreadsheet interface, or use
 | You need                                           | Start here                                                           |
 | -------------------------------------------------- | -------------------------------------------------------------------- |
 | A working grid with menus and formula editing      | [First spreadsheet](first-sheet.mdx) and [shadcn/ui guide](../ui.md) |
-| Your own components and design system              | [Headless rendering](../guides/headless.md)                          |
+| Your own components and design system              | [Headless rendering](../guides/headless.mdx)                         |
 | Calculations over a large local dataset            | [Worker data source](../guides/data-sources.md#local-worker)         |
 | Authoritative server calculations and live updates | [Server reporting recipe](../use-cases/server-reporting.md)          |
 | Something to try before integrating                | [Interactive examples](../examples/basic.mdx)                        |

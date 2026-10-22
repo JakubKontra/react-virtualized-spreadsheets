@@ -41,11 +41,11 @@ The second import includes an explicit `@source` for the shipped UI components, 
 
 ```tsx
 import { Spreadsheet, Button } from '@sheet/ui';
-import type { SpreadsheetStore } from '@sheet/core';
+import { Address, type CanonicalCol, type SpreadsheetStore } from '@sheet/core';
 
 const labels = ['Item', 'Quantity', 'Cost'];
-const getColumnLabel = (column: number) => labels[column];
-const columnWidth = (column: number) => (column === 0 ? 220 : 140);
+const getColumnLabel = (column: CanonicalCol) => labels[column];
+const columnWidth = (column: CanonicalCol) => (column === 0 ? 220 : 140);
 
 export function Inventory({ store }: { store: SpreadsheetStore }) {
   return (
@@ -57,7 +57,7 @@ export function Inventory({ store }: { store: SpreadsheetStore }) {
       getColumnLabel={getColumnLabel}
       columnWidth={columnWidth}
       renderToolbar={(sheet) => (
-        <Button variant="outline" onClick={() => sheet.select({ row: 0, col: 0 })}>
+        <Button variant="outline" onClick={() => sheet.navigation.select(Address.of(0, 0))}>
           First item
         </Button>
       )}
@@ -70,21 +70,21 @@ Create and dispose the store in the host application. Changing the renderer or u
 
 ## Props and optional integrations
 
-| Prop                              | Behavior                                                                                                                                                                            |
-| --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `store`                           | Required `SpreadsheetStore`. Supplies all data and interaction state.                                                                                                               |
-| `title`                           | Defaults to the view name, then `Spreadsheet`. Also labels the workbook region.                                                                                                     |
-| `height`                          | Grid scroll viewport height; defaults to `480` pixels. Accepts CSS lengths such as `60vh`.                                                                                          |
-| `locale`                          | Number and value formatting; defaults to `en-US`. Interface labels remain English.                                                                                                  |
-| `className`                       | Applied to the instance root, including its portal container.                                                                                                                       |
-| `getColumnLabel(canonicalColumn)` | Optional label fallback after view-owned labels. Receives stable canonical indexes, including after reordering. No sales-specific labels are supplied by the library.               |
-| `columnWidth(canonicalColumn)`    | Same semantics as `useSpreadsheet`. Default 120px; saved view widths take precedence. Keep the callback stable.                                                                     |
-| `renderToolbar(sheet)`            | Adds application actions after Undo/Redo. Receives the headless controller, including `commitEdit`, `select` and `startEdit`. Commit any draft before mutating data.                |
-| `persistence`                     | Optional structural binding with `subscribe`, `getSnapshot` and `flush`. Compatible with `ViewPersistenceBinding`. Without it, save indicators and page-unload handling are absent. |
-| `views`                           | Optional adapter exposing `list` and `save`. Compatible with `LocalStorageViewAdapter` and `HttpViewAdapter`; the UI never constructs an adapter or accesses localStorage.          |
-| `onSwitchView(id)`                | Host callback that loads and mounts the selected view's store. Named-view controls appear only with a view-enabled store, persistence, an adapter with `list`, and this callback.   |
+| Prop                              | Behavior                                                                                                                                                                                               |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `store`                           | Required `SpreadsheetStore`. Supplies all data and interaction state.                                                                                                                                  |
+| `title`                           | Defaults to the view name, then `Spreadsheet`. Also labels the workbook region.                                                                                                                        |
+| `height`                          | Grid scroll viewport height; defaults to `480` pixels. Accepts CSS lengths such as `60vh`.                                                                                                             |
+| `locale`                          | Number and value formatting; defaults to `en-US`. Interface labels remain English.                                                                                                                     |
+| `className`                       | Applied to the instance root, including its portal container.                                                                                                                                          |
+| `getColumnLabel(canonicalColumn)` | Optional label fallback after view-owned labels. Receives stable canonical indexes, including after reordering. No sales-specific labels are supplied by the library.                                  |
+| `columnWidth(canonicalColumn)`    | Same semantics as `useSpreadsheet`. Default 120px; saved view widths take precedence. Keep the callback stable.                                                                                        |
+| `renderToolbar(sheet)`            | Adds application actions after Undo/Redo. Receives the headless controller, including `edit.commit`, `edit.start` and `navigation.select`. Commit any draft before mutating data.                      |
+| `persistence`                     | Optional structural binding with `subscribe`, `getSnapshot` and `flush`. Compatible with `ViewPersistenceBinding`. Without it, save indicators and page-unload handling are absent.                    |
+| `views`                           | Optional adapter exposing `list` and `save`. Compatible with `LocalStorageViewAdapter` and `HttpViewAdapter`; the UI never constructs an adapter or accesses localStorage.                             |
+| `onSwitchView(id)`                | Host callback receiving a `ViewId` that loads and mounts the selected view's store. Named-view controls appear only with a view-enabled store, persistence, an adapter with `list`, and this callback. |
 
-`getSnapshot` must return a stable `{ status: 'saved' | 'saving' | 'unsaved' | 'error', error: string | null }` object until it changes. Subscription/getter methods should be bound to their owner (the built-in binding already uses arrow methods). `flush` returns a promise. Save errors remain visible and can be retried.
+`getSnapshot` must return a stable `SpreadsheetSaveStatus` object until it changes: `{ status: 'saved' | 'saving' | 'unsaved', error: null }` or `{ status: 'error', error: string }`. Subscription/getter methods should be bound to their owner (the built-in binding already uses arrow methods). `flush` returns a promise. Save errors remain visible and can be retried.
 
 A plain store supports editing, formulas, selection, clipboard and history. Freeze, sort/filter, formatting and structural controls appear only when `store.view` exists. Values use `store.columnOptions`; numeric columns do not imply a currency. See [view configuration](views.md) to enable these features.
 

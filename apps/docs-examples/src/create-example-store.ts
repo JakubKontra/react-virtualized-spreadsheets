@@ -1,44 +1,54 @@
 import {
+  Address,
   createSpreadsheet,
   createViewState,
   EngineSession,
   FormulaEngine,
   ViewCalculationRegistry,
+  type ViewCapableCalculator,
+  type CellInput,
+  type CellPatch,
   type EngineOptions,
+  type SpreadsheetStore,
   type ViewSettings,
 } from '@sheet/core';
 import { createLocalSource } from '@sheet/transport';
 
+/** A cell of example data, by zero-based row and column. */
+export const cell = (row: number, col: number, input: CellInput): CellPatch => ({
+  ...Address.of(row, col),
+  input,
+});
+
+/** Runs calculations on the main thread; fine for small, complete in-memory datasets. */
+function inProcessCalculator(session: EngineSession): ViewCapableCalculator {
+  const registry = new ViewCalculationRegistry(session.engine);
+  return {
+    calculate: async (range) => session.block(range),
+    apply: async (mutation, revision) => session.mutate(mutation, revision),
+    views: {
+      query: async (view) => registry.query(view, session.revision),
+      summary: async (view, range) => registry.summary(view, range, session.revision),
+      blocks: async (view, ranges) => registry.blocks(view, ranges, session.revision),
+    },
+    dispose() {},
+  };
+}
+
 // Small, complete in-memory datasets. Use WorkerCalculationAdapter for large sheets.
-export function createExampleStore(data: EngineOptions, settings: ViewSettings = {}) {
-  const engine = new FormulaEngine(data);
-  const session = new EngineSession(engine);
-  const registry = new ViewCalculationRegistry(engine);
+export function createExampleStore(
+  data: EngineOptions,
+  settings: ViewSettings = {},
+): SpreadsheetStore {
+  const session = new EngineSession(new FormulaEngine(data));
   const source = createLocalSource({
     metadata: session.metadata,
     columnFormulas: data.columnFormulas,
-    calculator: {
-      async calculate(range) {
-        return session.block(range);
-      },
-      async calculateView(view, ranges) {
-        return registry.blocks(view, ranges, session.revision);
-      },
-      async queryView(view) {
-        return registry.query(view, session.revision);
-      },
-      async summarizeView(view, range) {
-        return registry.summary(view, range, session.revision);
-      },
-      async apply(mutation, revision) {
-        return session.mutate(mutation, revision);
-      },
-      dispose() {},
-    },
+    calculator: inProcessCalculator(session),
   });
-  const viewState = {
+  const state = {
     ...createViewState(source, { viewId: 'example', sourceId: 'example-data' }),
     ...settings,
   };
-  return createSpreadsheet({ source, viewState });
+  return createSpreadsheet({ source, view: { state } });
 }

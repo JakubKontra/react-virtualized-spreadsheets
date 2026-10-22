@@ -1,5 +1,6 @@
 import { StrictMode, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import { isRecord } from '@sheet/core';
 import Basic from './basic';
 import Inventory from './inventory';
 import Quotation from './quotation';
@@ -12,9 +13,11 @@ const examples = {
   quotation: Quotation,
   independent: Independent,
 };
+type ExampleName = keyof typeof examples;
+const isExampleName = (value: string): value is ExampleName => Object.hasOwn(examples, value);
 const params = new URLSearchParams(location.search);
 const name = params.get('example') ?? 'basic';
-const Example = examples[name as keyof typeof examples] ?? Basic;
+const Example = isExampleName(name) ? examples[name] : Basic;
 function setTheme(theme: unknown) {
   document.documentElement.classList.toggle('dark', theme === 'dark');
 }
@@ -24,7 +27,8 @@ window.addEventListener('message', (event) => {
   if (
     event.origin === location.origin &&
     event.source === parent &&
-    event.data?.type === 'sheet-docs-theme'
+    isRecord(event.data) &&
+    event.data.type === 'sheet-docs-theme'
   )
     setTheme(event.data.theme);
 });
@@ -32,7 +36,8 @@ function App() {
   const [generation, setGeneration] = useState(0);
   const root = useRef<HTMLElement>(null);
   useEffect(() => {
-    const element = root.current!;
+    const element = root.current;
+    if (!element) return;
     const observer = new ResizeObserver(() => {
       parent.postMessage(
         { type: 'sheet-docs-size', height: Math.ceil(element.getBoundingClientRect().height) },
@@ -54,7 +59,9 @@ function App() {
     </main>
   );
 }
-createRoot(document.getElementById('root')!).render(
+const container = document.getElementById('root');
+if (!container) throw new Error('Missing #root element');
+createRoot(container).render(
   <StrictMode>
     <App />
   </StrictMode>,
