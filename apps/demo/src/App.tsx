@@ -1,15 +1,29 @@
-import { memo, useEffect, useRef, useState, type HTMLAttributes } from 'react';
 import {
-  addressLabel,
+  memo,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type HTMLAttributes,
+} from 'react';
+import {
   columnLabel,
   createSpreadsheet,
+  createViewState,
   isError,
-  parseAddress,
+  parseInput,
   type SpreadsheetStore,
 } from '@sheet/core';
 import { useCell, useSpreadsheet } from '@sheet/react';
-import { createHttpSource, createLocalSource, WorkerCalculationAdapter } from '@sheet/transport';
+import {
+  createHttpSource,
+  createLocalSource,
+  WorkerCalculationAdapter,
+  LocalStorageViewAdapter,
+  ViewPersistenceBinding,
+} from '@sheet/transport';
 import { SALES_COLUMNS, SALES_FORMULAS } from '../../shared/sales';
+import { ViewControls } from './ViewControls';
 
 const widths = [154, 130, 204, 94, 128, 112, 150, 138];
 const columnWidth = (col: number) => widths[col] ?? 132;
@@ -25,12 +39,15 @@ export function App() {
   const [mode, setMode] = useState<'local' | 'remote'>('local');
   const [store, setStore] = useState<SpreadsheetStore | null>(null);
   const [error, setError] = useState('');
+  const [saving, setSaving] = useState<ViewPersistenceBinding | null>(null);
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     let active = true;
     let instance: SpreadsheetStore | undefined;
+    let binding: ViewPersistenceBinding | undefined;
     const controller = new AbortController();
     setStore(null);
+    setSaving(null);
     setError('');
     async function load() {
       const source =
@@ -47,7 +64,30 @@ export function App() {
         source.dispose();
         return;
       }
-      instance = createSpreadsheet({ source });
+      const adapter = new LocalStorageViewAdapter(localStorage);
+      const viewId = `sales-${mode}-v1`;
+      let saved;
+      try {
+        saved = await adapter.load(viewId, controller.signal);
+      } catch (error) {
+        source.dispose();
+        throw error;
+      }
+      if (!active) {
+        source.dispose();
+        return;
+      }
+      const viewState =
+        saved?.state ??
+        createViewState(source, {
+          viewId,
+          sourceId: `sales-${mode}`,
+          ownedColumns: Array.from({ length: 44 }, (_, i) => i + 6),
+          labels: Object.fromEntries(SALES_COLUMNS.map((name, index) => [index, name])),
+        });
+      instance = createSpreadsheet({ source, viewState });
+      binding = new ViewPersistenceBinding(instance.view!, adapter, saved?.version ?? null);
+      setSaving(binding);
       setStore(instance);
       if (import.meta.env.DEV) window.__sheet = instance;
     }
@@ -57,10 +97,25 @@ export function App() {
     return () => {
       active = false;
       controller.abort();
+      binding?.dispose();
       instance?.dispose();
       if (window.__sheet === instance) delete window.__sheet;
     };
   }, [mode, attempt]);
+  async function switchMode(next: 'local' | 'remote') {
+    try {
+      const state = store?.getSnapshot();
+      if (state?.editing) {
+        if (String(store!.readCell(state.editing).input ?? '') === (state.draft ?? ''))
+          store!.cancelEdit();
+        else await store!.edit([{ ...state.editing, input: parseInput(state.draft ?? '') }]);
+      }
+      await saving?.flush();
+      if (saving?.getSnapshot().status !== 'error') setMode(next);
+    } catch (error) {
+      store?.setError(error);
+    }
+  }
   return (
     <div className="app-shell">
       <aside className="rail" aria-label="Workspace">
@@ -93,12 +148,19 @@ export function App() {
             <p>A little more clarity. A lot more rows.</p>
           </div>
           <div className="mode-switch" aria-label="Data mode">
-            <button className={mode === 'local' ? 'selected' : ''} onClick={() => setMode('local')}>
+            <button
+              className={mode === 'local' ? 'selected' : ''}
+              onClick={() => {
+                void switchMode('local');
+              }}
+            >
               Local workbook
             </button>
             <button
               className={mode === 'remote' ? 'selected' : ''}
-              onClick={() => setMode('remote')}
+              onClick={() => {
+                void switchMode('remote');
+              }}
             >
               Live server <span className="small-dot" />
             </button>
@@ -123,7 +185,7 @@ export function App() {
           </span>
         </section>
         {store ? (
-          <Sheet key={mode + attempt} store={store} />
+          <Sheet key={mode + attempt} store={store} saving={saving!} />
         ) : (
           <div className="loading-panel">
             {error ? (
@@ -169,21 +231,22 @@ const Cell = memo(function Cell({
   active: boolean;
 }) {
   const cell = useCell(store, row, col);
+  const canonicalCol = store.view?.columns.canonicalAt(col) ?? col;
   const text = isError(cell.value)
     ? cell.value.error
     : cell.value === null
       ? ''
       : typeof cell.value === 'number'
-        ? col === 5
+        ? canonicalCol === 5
           ? `${number.format(cell.value * 100)}%`
-          : [4, 6, 7].includes(col)
+          : [4, 6, 7].includes(canonicalCol)
             ? money.format(cell.value)
             : number.format(cell.value)
         : String(cell.value);
   return (
     <div
       {...props}
-      className={`cell ${col >= 3 ? 'numeric' : ''} ${col >= 6 ? 'computed' : ''} ${active ? 'current' : ''} ${cell.status === 'error' ? 'cell-error' : ''} ${cell.status === 'calculating' ? 'calculating' : ''}`}
+      className={`cell ${canonicalCol >= 3 ? 'numeric' : ''} ${store.view?.columns.isOwned(col) ? 'computed' : ''} ${active ? 'current' : ''} ${cell.status === 'error' ? 'cell-error' : ''} ${cell.status === 'calculating' ? 'calculating' : ''}`}
       style={{ left, width }}
       title={
         isError(cell.value)
@@ -199,26 +262,37 @@ const Cell = memo(function Cell({
     </div>
   );
 });
-function Sheet({ store }: { store: SpreadsheetStore }) {
+function Sheet({ store, saving }: { store: SpreadsheetStore; saving: ViewPersistenceBinding }) {
+  const saveState = useSyncExternalStore(saving.subscribe, saving.getSnapshot, saving.getSnapshot);
   const scrollRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<HTMLInputElement>(null);
   const sheet = useSpreadsheet({ store, scrollRef, columnWidth });
   const { state } = sheet;
   const [jump, setJump] = useState('A1');
-  const selected = state.selection.end;
-  const current = useCell(store, selected.row, selected.col);
-  const [formula, setFormula] = useState('');
-  const formulaFocused = useRef(false);
+  const selected = state.active;
   useEffect(() => {
-    setJump(addressLabel(selected));
-    setFormula(String(store.readCell(selected).input ?? ''));
-  }, [selected.row, selected.col, store]);
+    setJump(store.labelAddress(selected));
+  }, [selected.row, selected.col, state.viewRevision, store]);
   useEffect(() => {
-    if (!formulaFocused.current) setFormula(String(current.input ?? ''));
-  }, [current.input]);
+    if (state.editing && state.editor === 'cell') editorRef.current?.focus();
+  }, [state.editing, state.editor]);
   useEffect(() => {
-    if (state.editing) editorRef.current?.focus();
-  }, [state.editing]);
+    const flush = () => {
+      void saving.flush();
+    };
+    const beforeUnload = (event: BeforeUnloadEvent) => {
+      if (saving.getSnapshot().status !== 'saved' || store.getSnapshot().editing) {
+        event.preventDefault();
+        event.returnValue = '';
+      }
+    };
+    document.addEventListener('visibilitychange', flush);
+    window.addEventListener('beforeunload', beforeUnload);
+    return () => {
+      document.removeEventListener('visibilitychange', flush);
+      window.removeEventListener('beforeunload', beforeUnload);
+    };
+  }, [saving, store]);
   const act = (promise: Promise<unknown>) => {
     void promise.catch((error) => store.setError(error));
   };
@@ -236,7 +310,13 @@ function Sheet({ store }: { store: SpreadsheetStore }) {
             aria-label="Undo"
             title="Undo (Ctrl/⌘ Z)"
             disabled={!state.canUndo || state.pending}
-            onClick={() => act(store.undo())}
+            onClick={() =>
+              act(
+                sheet.commitEdit().then(async (ok) => {
+                  if (ok) await store.undo();
+                }),
+              )
+            }
           >
             ↶
           </button>
@@ -244,21 +324,40 @@ function Sheet({ store }: { store: SpreadsheetStore }) {
             aria-label="Redo"
             title="Redo (Ctrl/⌘ Shift Z)"
             disabled={!state.canRedo || state.pending}
-            onClick={() => act(store.redo())}
+            onClick={() =>
+              act(
+                sheet.commitEdit().then(async (ok) => {
+                  if (ok) await store.redo();
+                }),
+              )
+            }
           >
             ↷
           </button>
           <span className="toolbar-separator" />
           <button
             className="calculation-button"
-            onClick={() => {
-              sheet.select({ row: 0, col: 8 });
+            onClick={() =>
               act(
-                store
-                  .ensureRange({ start: { row: 0, col: 8 }, end: { row: 0, col: 8 } })
-                  .then(() => sheet.startEdit(`=SUM($D$1:$D$${store.rows})`, { row: 0, col: 8 })),
-              );
-            }}
+                (async () => {
+                  if (!(await sheet.commitEdit())) return;
+                  // Start next to the current column so the new calculation is immediately visible.
+                  const col = selected.col + 1;
+                  store.changeView({
+                    type: 'insert',
+                    axis: 'columns',
+                    before: col,
+                    label: 'Calculation',
+                  });
+                  const units = store.view!.columns.logicalIndex(3);
+                  const formula = `=SUM($${columnLabel(units)}$1:$${columnLabel(units)}$${store.view!.rows.logicalCount})`;
+                  const address = { row: 0, col };
+                  sheet.select(address);
+                  await store.ensureRange({ start: address, end: address });
+                  sheet.startEdit(formula, address);
+                })(),
+              )
+            }
           >
             ƒx <span>Add calculation</span>
           </button>
@@ -268,7 +367,7 @@ function Sheet({ store }: { store: SpreadsheetStore }) {
         <form
           onSubmit={(event) => {
             event.preventDefault();
-            const address = parseAddress(jump);
+            const address = store.resolveAddress(jump);
             if (!address) {
               store.setError(new Error('Enter an address such as A100'));
               return;
@@ -291,41 +390,21 @@ function Sheet({ store }: { store: SpreadsheetStore }) {
         </form>
         <span className="formula-symbol">ƒx</span>
         <input
-          aria-label="Formula bar"
-          value={formula}
+          {...sheet.formulaBarProps}
           placeholder={
             isRemote
               ? 'Select a calculated column to write a formula'
               : 'Select a cell or write a formula, e.g. =SUM(D1:D100000)'
           }
-          disabled={
-            !store.source.isEditable(selected) ||
-            state.pending ||
-            current.status === 'loading' ||
-            current.status === 'calculating'
-          }
-          onFocus={() => {
-            formulaFocused.current = true;
-          }}
-          onBlur={() => {
-            formulaFocused.current = false;
-          }}
-          onChange={(event) => setFormula(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter') {
-              formulaFocused.current = false;
-              void sheet.commitEdit(formula);
-            }
-            if (event.key === 'Escape') {
-              setFormula(String(current.input ?? ''));
-              scrollRef.current?.focus();
-            }
-          }}
           spellCheck={false}
         />
-        {isRemote && selected.col >= 6 && (
-          <span className="formula-hint">Applies to column {columnLabel(selected.col)}</span>
-        )}
+        {isRemote &&
+          store.view?.columns.isOwned(selected.col) &&
+          !store.view.rows.isOwned(selected.row) && (
+            <span className="formula-hint">
+              Applies to column {columnLabel(store.logicalAddress(selected).col)}
+            </span>
+          )}
       </div>
       {state.error && (
         <div className="error-banner" role="alert">
@@ -347,19 +426,56 @@ function Sheet({ store }: { store: SpreadsheetStore }) {
         <div className="grid-canvas" style={{ width: sheet.totalWidth, height: sheet.totalHeight }}>
           <div className="column-headers" role="row" style={{ width: sheet.totalWidth }}>
             <div className="corner" role="columnheader">
-              ◩
+              <button
+                aria-label="Select all cells"
+                onClick={() => {
+                  void sheet.commitEdit().then((ok) => {
+                    if (ok) store.selectAll();
+                  });
+                }}
+              >
+                ◩
+              </button>
             </div>
             {sheet.virtualColumns.map((col) => (
               <div
+                {...sheet.gestures.headerProps('columns', col.index)}
                 role="columnheader"
                 aria-colindex={col.index + 1}
                 key={col.key}
-                className={`column-header ${col.index >= 6 ? 'formula-column' : ''}`}
+                className={`column-header ${store.view?.columns.isOwned(col.index) ? 'formula-column' : ''}`}
+                data-column-id={store.source.columnId(col.index)}
                 style={{ left: col.start, width: col.size }}
               >
-                <span className="column-letter">{columnLabel(col.index)}</span>
-                <span>{SALES_COLUMNS[col.index] ?? 'Calculation'}</span>
-                {col.index >= 6 && <em>ƒx</em>}
+                <button
+                  className="column-letter drag-handle"
+                  {...sheet.gestures.dragProps('columns', col.index)}
+                >
+                  {columnLabel(store.logicalAddress({ row: 0, col: col.index }).col)}
+                </button>
+                <span className="column-name">
+                  {store.view?.getSnapshot().columns.owned[
+                    store.view.columns.canonicalAt(col.index)
+                  ]?.label ??
+                    SALES_COLUMNS[store.view?.columns.canonicalAt(col.index) ?? col.index] ??
+                    'Calculation'}
+                </span>
+                <button
+                  className="header-menu-button"
+                  aria-haspopup="dialog"
+                  aria-label={`Column ${columnLabel(store.logicalAddress({ row: 0, col: col.index }).col)} menu`}
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onClick={(event) => {
+                    const rect = event.currentTarget.getBoundingClientRect();
+                    void sheet.gestures.openMenu('columns', col.index, rect.left, rect.bottom);
+                  }}
+                >
+                  ⌄
+                </button>
+                <span
+                  className="column-resizer"
+                  {...sheet.gestures.resizeProps('columns', col.index)}
+                />
               </div>
             ))}
           </div>
@@ -372,10 +488,30 @@ function Sheet({ store }: { store: SpreadsheetStore }) {
               style={{ top: row.start, width: sheet.totalWidth, height: row.size }}
             >
               <div
+                {...sheet.gestures.headerProps('rows', row.index)}
                 role="rowheader"
+                data-row-id={store.source.rowId(row.index)}
                 className={`row-header ${selected.row === row.index ? 'selected' : ''}`}
               >
-                {number.format(row.index + 1)}
+                <button
+                  className="row-drag-handle"
+                  {...sheet.gestures.dragProps('rows', row.index)}
+                >
+                  {number.format(store.logicalAddress({ row: row.index, col: 0 }).row + 1)}
+                </button>
+                <button
+                  className="row-menu-button"
+                  aria-haspopup="dialog"
+                  aria-label={`Row ${store.logicalAddress({ row: row.index, col: 0 }).row + 1} menu`}
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onClick={(event) => {
+                    const rect = event.currentTarget.getBoundingClientRect();
+                    void sheet.gestures.openMenu('rows', row.index, rect.right, rect.top);
+                  }}
+                >
+                  ⋮
+                </button>
+                <span className="row-resizer" {...sheet.gestures.resizeProps('rows', row.index)} />
               </div>
               {sheet.virtualColumns.map((col) => (
                 <Cell
@@ -391,7 +527,7 @@ function Sheet({ store }: { store: SpreadsheetStore }) {
               ))}
             </div>
           ))}
-          {state.editing && (
+          {state.editing && state.editor === 'cell' && (
             <input
               {...sheet.editorProps}
               ref={editorRef}
@@ -402,6 +538,7 @@ function Sheet({ store }: { store: SpreadsheetStore }) {
           )}
         </div>
       </div>
+      <ViewControls sheet={sheet} store={store} />
       <div className="sheet-bottom">
         <div className="sheet-tab">
           <span>▦</span> Sales <span className="tab-chevron">⌄</span>
@@ -432,7 +569,20 @@ function Sheet({ store }: { store: SpreadsheetStore }) {
         <span>
           <kbd>⌘ / Ctrl</kbd> C / V to copy & paste
         </span>
-        <span className="revision">Revision {state.revision}</span>
+        <span className="revision" role="status">
+          {saveState.status === 'saved'
+            ? 'View saved'
+            : saveState.status === 'saving'
+              ? 'Saving view…'
+              : saveState.status === 'error'
+                ? 'View not saved'
+                : 'Unsaved view'}{' '}
+          {saveState.status === 'error' && (
+            <button onClick={() => act(saving.flush())} title={saveState.error ?? ''}>
+              Retry save
+            </button>
+          )}
+        </span>
       </div>
     </section>
   );

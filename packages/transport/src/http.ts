@@ -87,6 +87,16 @@ export async function createHttpSource(options: HttpSourceOptions): Promise<Data
       });
       return json<DataBlock>(await request(`${base}/block?${params}`, { signal }));
     },
+    async getViewBlocks(view, ranges, signal) {
+      return json<{ blocks: DataBlock[]; revision: number }>(
+        await request(`${base}/view-blocks`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ view, ranges }),
+          signal,
+        }),
+      );
+    },
     async mutate(mutation: Mutation, revision: number, signal: AbortSignal) {
       const result = await json<RemoteMetadata>(
         await request(`${base}/mutate`, {

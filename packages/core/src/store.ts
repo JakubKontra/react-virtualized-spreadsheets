@@ -1,7 +1,12 @@
 import { copyRange, pasteCells, type ClipboardData } from './clipboard';
 import { shiftFormula } from './formula';
+import { ViewAxis, ViewController, type Axis, type SheetViewState, type ViewChange } from './view';
+import { mapViewFormula } from './view-formula';
+import { createViewSource } from './view-source';
 import {
   cellKey,
+  addressLabel,
+  parseAddress,
   normalizeRange,
   type Address,
   type CellPatch,
@@ -17,13 +22,20 @@ interface Block {
   cells: Map<string, CellSnapshot>;
   revision: number;
 }
-interface HistoryEntry {
-  forward: Mutation;
-  backward: Mutation;
-}
+type HistoryEntry =
+  | {
+      forward: Mutation;
+      backward: Mutation;
+    }
+  | { beforeView: SheetViewState; afterView: SheetViewState };
 export interface SpreadsheetState {
   selection: CellRange;
+  selectionKind: 'cells' | 'rows' | 'columns' | 'all';
+  active: Address;
   editing: Address | null;
+  draft: string | null;
+  editor: 'cell' | 'bar';
+  viewRevision: number;
   connection: 'connected' | 'disconnected';
   pending: boolean;
   loading: number;
@@ -34,6 +46,8 @@ export interface SpreadsheetState {
 }
 export interface SpreadsheetOptions {
   source: DataSource;
+  viewState?: SheetViewState;
+  onViewStateChange?: (state: SheetViewState) => void;
   blockRows?: number;
   blockColumns?: number;
   maxBlocks?: number;
@@ -63,7 +77,12 @@ export class SpreadsheetStore {
   private unsubscribe: () => void;
   private state: SpreadsheetState;
   constructor(private options: SpreadsheetOptions) {
-    this.source = options.source;
+    this.source = options.viewState
+      ? createViewSource(
+          options.source,
+          new ViewController(options.viewState, options.onViewStateChange),
+        )
+      : options.source;
     this.blockRows = options.blockRows ?? 64;
     this.blockColumns = options.blockColumns ?? 8;
     this.maxBlocks = options.maxBlocks ?? 48;
@@ -76,6 +95,11 @@ export class SpreadsheetStore {
       throw new Error('Invalid cache configuration');
     this.state = {
       selection: { start: { row: 0, col: 0 }, end: { row: 0, col: 0 } },
+      selectionKind: 'cells',
+      active: { row: 0, col: 0 },
+      draft: null,
+      editor: 'cell',
+      viewRevision: this.source.view?.getSnapshot().revision ?? 0,
       editing: null,
       connection: 'connected',
       pending: false,
@@ -89,11 +113,32 @@ export class SpreadsheetStore {
       if (this.disposed) return;
       if (event.connection) this.update({ connection: event.connection });
       if (event.error) this.update({ error: event.error });
-      if (event.revision > this.state.revision) this.invalidate(event.revision);
+      if (event.revision > this.state.revision)
+        this.invalidate(event.revision, event.mappingChanged);
     });
   }
   get rows() {
     return this.source.metadata.rows;
+  }
+  get view() {
+    return this.source.view;
+  }
+  logicalAddress(address: Address) {
+    return this.view?.logical(address) ?? address;
+  }
+  labelAddress(address: Address) {
+    return addressLabel(this.logicalAddress(address));
+  }
+  resolveAddress(label: string): Address | null {
+    const address = parseAddress(label);
+    if (!address || !this.view) return address;
+    try {
+      const row = this.view.rows.visibleIndex(this.view.rows.canonicalAtLogical(address.row));
+      const col = this.view.columns.visibleIndex(this.view.columns.canonicalAtLogical(address.col));
+      return row < 0 || col < 0 ? null : { row, col };
+    } catch {
+      return null;
+    }
   }
   get columns() {
     return this.source.metadata.columns;
@@ -226,7 +271,14 @@ export class SpreadsheetStore {
     const ids = this.ids(range);
     if (ids.length > this.maxBlocks)
       throw new Error('Requested range exceeds the client cache; use smaller batches');
-    await Promise.all(ids.map((id) => this.fetchBlock(id)));
+    // A read can discover a newer source revision before its SSE event arrives.
+    // In that case fetch again so callers can safely edit the loaded targets.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const revision = this.state.revision;
+      await Promise.all(ids.map((id) => this.fetchBlock(id)));
+      if (this.disposed || revision === this.state.revision) return;
+    }
+    throw new Error('The sheet changed while loading. Try again.');
   }
   setViewport(range: CellRange) {
     if (this.disposed) return;
@@ -239,10 +291,29 @@ export class SpreadsheetStore {
       }
     void this.ensureRange(range).catch((error) => this.setError(error));
   }
-  private invalidate(revision: number) {
+  private invalidate(revision: number, mappingChanged = false) {
     this.generation++;
     for (const flight of this.flights.values()) flight.controller.abort();
     this.flights.clear();
+    if (mappingChanged) {
+      const keys = [...this.blocks.values()].flatMap((block) => [...block.cells.keys()]);
+      this.blocks.clear();
+      this.notify(keys);
+      const clamp = (address: Address) => ({
+        row: Math.min(address.row, this.rows - 1),
+        col: Math.min(address.col, this.columns - 1),
+      });
+      if (this.viewport)
+        this.viewport = { start: clamp(this.viewport.start), end: clamp(this.viewport.end) };
+      this.update({
+        active: clamp(this.state.active),
+        selection: {
+          start: clamp(this.state.selection.start),
+          end: clamp(this.state.selection.end),
+        },
+        viewRevision: this.view?.getSnapshot().revision ?? 0,
+      });
+    }
     for (const block of this.blocks.values()) {
       for (const [key, cell] of block.cells)
         block.cells.set(key, { ...cell, status: 'calculating' });
@@ -270,19 +341,127 @@ export class SpreadsheetStore {
     this.update({
       selection: { start: extend ? this.state.selection.start : address, end: address },
       editing: null,
+      draft: null,
+      active: address,
+      selectionKind: 'cells',
     });
   }
-  beginEdit(address = this.state.selection.end) {
+  selectAxis(axis: Axis, index: number, extend = false) {
+    const coordinate = axis === 'rows' ? 'row' : 'col';
+    const anchor =
+      extend && this.state.selectionKind === axis ? this.state.selection.start[coordinate] : index;
+    const start = axis === 'rows' ? { row: anchor, col: 0 } : { row: 0, col: anchor };
+    const end =
+      axis === 'rows' ? { row: index, col: this.columns - 1 } : { row: this.rows - 1, col: index };
+    this.assertAddress(start);
+    this.assertAddress(end);
+    this.update({
+      selection: { start, end },
+      active: { ...this.state.active, [coordinate]: index },
+      selectionKind: axis,
+      editing: null,
+      draft: null,
+    });
+  }
+  selectAll() {
+    this.update({
+      selection: { start: { row: 0, col: 0 }, end: { row: this.rows - 1, col: this.columns - 1 } },
+      selectionKind: 'all',
+      editing: null,
+      draft: null,
+    });
+  }
+  beginEdit(address = this.state.active, initial?: string, editor: 'cell' | 'bar' = 'cell') {
+    if (
+      initial === undefined &&
+      this.state.editing?.row === address.row &&
+      this.state.editing.col === address.col
+    ) {
+      this.update({ editor });
+      return;
+    }
     if (!this.source.isEditable(address)) {
       this.setError(new Error('Source data is read-only. Edit a calculated column.'));
       return;
     }
     const cell = this.readCell(address);
     if (cell.status === 'loading' || cell.status === 'calculating' || this.state.pending) return;
-    this.update({ editing: address, error: null });
+    this.update({
+      editing: address,
+      draft: initial ?? String(cell.input ?? ''),
+      editor,
+      error: null,
+    });
+  }
+  setDraft(draft: string) {
+    if (this.state.editing) this.update({ draft });
   }
   cancelEdit() {
-    this.update({ editing: null });
+    this.update({ editing: null, draft: null });
+  }
+  private rebaseClipboard(before: SheetViewState, after: SheetViewState) {
+    if (
+      !this.clipboard?.positions ||
+      (before.rows === after.rows && before.columns === after.columns)
+    )
+      return;
+    const oldRows = new ViewAxis(before.rows);
+    const oldColumns = new ViewAxis(before.columns);
+    const rows = new ViewAxis(after.rows);
+    const columns = new ViewAxis(after.columns);
+    const positions = this.clipboard.positions.map((row) =>
+      row.map((position) => ({
+        row: rows.logicalIndex(oldRows.canonicalAtLogical(position.row)),
+        col: columns.logicalIndex(oldColumns.canonicalAtLogical(position.col)),
+      })),
+    );
+    if (positions.some((row) => row.some((position) => position.row < 0 || position.col < 0))) {
+      this.clipboard = null;
+      this.clipboardToken = '';
+      return;
+    }
+    const inputs = this.clipboard.inputs.map((row) =>
+      row.map((input) =>
+        typeof input === 'string' && input.startsWith('=')
+          ? mapViewFormula(mapViewFormula(input, before, 'bind'), after, 'display')
+          : input,
+      ),
+    );
+    this.clipboard = { ...this.clipboard, inputs, positions, origin: positions[0][0] };
+  }
+  private replaceView(next: SheetViewState) {
+    if (!this.view) throw new Error('Configure viewState to change the view');
+    const active = this.view.canonical(this.state.active);
+    const before = this.view.getSnapshot();
+    this.view.replace(next);
+    this.rebaseClipboard(before, this.view.getSnapshot());
+    const row = this.view.rows.visibleIndex(active.row);
+    const col = this.view.columns.visibleIndex(active.col);
+    this.select({
+      row: row < 0 ? Math.min(this.state.active.row, this.rows - 1) : row,
+      col: col < 0 ? Math.min(this.state.active.col, this.columns - 1) : col,
+    });
+  }
+  setViewState(next: SheetViewState) {
+    this.replaceView(next);
+  }
+  changeView(change: ViewChange) {
+    if (!this.view) throw new Error('Configure viewState to change the view');
+    if (this.state.editing || this.state.pending)
+      throw new Error('Finish editing before changing the view');
+    const beforeView = this.view.getSnapshot();
+    const active = this.view.canonical(this.state.active);
+    this.view.change(change);
+    const afterView = this.view.getSnapshot();
+    if (beforeView === afterView) return;
+    this.rebaseClipboard(beforeView, afterView);
+    const row = this.view.rows.visibleIndex(active.row);
+    const col = this.view.columns.visibleIndex(active.col);
+    this.select({
+      row: row < 0 ? Math.min(this.state.active.row, this.rows - 1) : row,
+      col: col < 0 ? Math.min(this.state.active.col, this.columns - 1) : col,
+    });
+    this.record({ beforeView, afterView });
   }
   setError(error: unknown) {
     this.update({ error: error instanceof Error ? error.message : String(error) });
@@ -301,7 +480,7 @@ export class SpreadsheetStore {
       const result = await this.source.mutate(mutation, this.state.revision, controller.signal);
       if (this.disposed) return;
       if (result.revision > this.state.revision) this.invalidate(result.revision);
-      this.update({ editing: null });
+      this.update({ editing: null, draft: null });
     } catch (error) {
       this.setError(error);
       throw error;
@@ -313,7 +492,8 @@ export class SpreadsheetStore {
   async edit(patches: CellPatch[]) {
     if (patches.length > 10000) throw new Error('Maximum edit size is 10,000 cells');
     const unique = [...new Map(patches.map((patch) => [cellKey(patch), patch])).values()];
-    if (this.source.mode === 'remote') {
+    const beforeView = this.view?.getSnapshot();
+    if (this.source.mode === 'remote' && !this.view) {
       const columns = new Map<number, string | null>();
       for (const patch of unique) {
         this.assertAddress(patch);
@@ -352,15 +532,20 @@ export class SpreadsheetStore {
     const forward = { cells: unique };
     const backward = { cells: before };
     await this.perform(forward);
-    this.record({ forward, backward });
+    this.record(
+      beforeView ? { beforeView, afterView: this.view!.getSnapshot() } : { forward, backward },
+    );
   }
   async setColumnFormula(col: number, formula: string | null) {
+    const beforeView = this.view?.getSnapshot();
     this.assertAddress({ row: 0, col });
     if (!this.source.isEditable({ row: 0, col })) throw new Error('This column is read-only');
     const forward = { columns: [{ col, formula }] };
     const backward = { columns: [{ col, formula: this.source.getColumnFormula(col) }] };
     await this.perform(forward);
-    this.record({ forward, backward });
+    this.record(
+      beforeView ? { beforeView, afterView: this.view!.getSnapshot() } : { forward, backward },
+    );
   }
   private record(entry: HistoryEntry) {
     if (this.disposed) return;
@@ -373,23 +558,29 @@ export class SpreadsheetStore {
     this.update({ canUndo: !!this.undoStack.length, canRedo: !!this.redoStack.length });
   }
   async undo() {
+    if (this.state.pending || this.state.editing) throw new Error('Finish editing before undo');
     const entry = this.undoStack.at(-1);
     if (!entry) return;
-    await this.perform(entry.backward);
+    if ('beforeView' in entry) this.replaceView(entry.beforeView);
+    else await this.perform(entry.backward);
     this.undoStack.pop();
     this.redoStack.push(entry);
     this.historyState();
   }
   async redo() {
+    if (this.state.pending || this.state.editing) throw new Error('Finish editing before redo');
     const entry = this.redoStack.at(-1);
     if (!entry) return;
-    await this.perform(entry.forward);
+    if ('afterView' in entry) this.replaceView(entry.afterView);
+    else await this.perform(entry.forward);
     this.redoStack.pop();
     this.undoStack.push(entry);
     this.historyState();
   }
   copy() {
-    this.clipboard = copyRange(this.state.selection, this.readCell);
+    this.clipboard = copyRange(this.state.selection, this.readCell, (address) =>
+      this.logicalAddress(address),
+    );
     this.clipboardToken = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}:${Math.random()}`;
     return this.clipboard.tsv;
   }
@@ -401,10 +592,14 @@ export class SpreadsheetStore {
       text,
       normalizeRange(this.state.selection).start,
       useInternalFormulas ? this.clipboard : null,
+      (address) => {
+        this.assertAddress(address);
+        return this.logicalAddress(address);
+      },
     );
     if (!patches.length) return;
     for (const patch of patches) this.assertAddress(patch);
-    if (this.source.mode === 'local')
+    if (this.source.mode === 'local' || this.view)
       await this.ensureRange({
         start: patches[0],
         end: {
@@ -417,7 +612,7 @@ export class SpreadsheetStore {
   async clearSelection() {
     const range = normalizeRange(this.state.selection);
     const size = (range.end.row - range.start.row + 1) * (range.end.col - range.start.col + 1);
-    if (this.source.mode === 'remote') {
+    if (this.source.mode === 'remote' && !this.view) {
       await this.edit(
         Array.from({ length: range.end.col - range.start.col + 1 }, (_, offset) => ({
           row: range.start.row,

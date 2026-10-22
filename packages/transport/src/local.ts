@@ -1,5 +1,7 @@
 import {
   EngineSession,
+  ViewCalculationRegistry,
+  type SheetViewState,
   type Address,
   type CalculationAdapter,
   type CellRange,
@@ -18,6 +20,13 @@ export class WorkerCalculationAdapter implements CalculationAdapter {
   }
   calculate(range: CellRange, signal: AbortSignal) {
     return this.rpc.request<DataBlock>('block', range, signal);
+  }
+  calculateView(view: SheetViewState, ranges: CellRange[], signal: AbortSignal) {
+    return this.rpc.request<{ blocks: DataBlock[]; revision: number }>(
+      'viewBlocks',
+      { view, ranges },
+      signal,
+    );
   }
   apply(mutation: Mutation, revision: number, signal: AbortSignal) {
     return this.rpc.request<{ revision: number }>('mutate', { mutation, revision }, signal);
@@ -47,6 +56,9 @@ export function createLocalSource(options: LocalSourceOptions): DataSource {
     columnId: (col) => `column:${col}`,
     isEditable: (address) => options.editable?.(address) ?? true,
     getBlock: (range, signal) => options.calculator.calculate(range, signal),
+    getViewBlocks: options.calculator.calculateView
+      ? (view, ranges, signal) => options.calculator.calculateView!(view, ranges, signal)
+      : undefined,
     async mutate(mutation, revision, signal) {
       const result = await options.calculator.apply(mutation, revision, signal);
       metadata = { ...metadata, revision: result.revision };
@@ -78,12 +90,16 @@ export function installCalculationWorker(
     postMessage(message: unknown): void;
   },
 ) {
+  const views = new ViewCalculationRegistry(session.engine);
   scope.onmessage = (event) => {
     const { id, method, payload } = event.data;
     try {
       let result: unknown;
       if (method === 'block') result = session.block(payload as CellRange);
-      else if (method === 'mutate') {
+      else if (method === 'viewBlocks') {
+        const data = payload as { view: SheetViewState; ranges: CellRange[] };
+        result = views.blocks(data.view, data.ranges, session.revision);
+      } else if (method === 'mutate') {
         const data = payload as { mutation: Mutation; revision: number };
         result = session.mutate(data.mutation, data.revision);
       } else throw new Error('Unknown worker method');

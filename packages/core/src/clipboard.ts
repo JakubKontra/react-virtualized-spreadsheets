@@ -59,52 +59,66 @@ export function decodeTSV(text: string): string[][] {
 }
 export interface ClipboardData {
   origin: Address;
+  positions?: Address[][];
   inputs: CellInput[][];
   tsv: string;
 }
 export function copyRange(
   range: CellRange,
   read: (address: Address) => CellSnapshot,
+  position: (address: Address) => Address = (address) => address,
 ): ClipboardData {
   const { start, end } = normalizeRange(range);
   const inputs: CellInput[][] = [];
   const values: CellInput[][] = [];
+  const positions: Address[][] = [];
   if ((end.row - start.row + 1) * (end.col - start.col + 1) > 10000)
     throw new Error('Clipboard limit is 10,000 cells');
   for (let row = start.row; row <= end.row; row++) {
     const inputRow: CellInput[] = [];
     const valueRow: CellInput[] = [];
+    const positionRow: Address[] = [];
     for (let col = start.col; col <= end.col; col++) {
       const cell = read({ row, col });
       if (cell.status === 'loading' || cell.status === 'calculating')
         throw new Error('Wait for the selected cells to load before copying');
       inputRow.push(cell.input);
+      positionRow.push(position({ row, col }));
       valueRow.push(
         typeof cell.value === 'object' && cell.value !== null ? cell.value.error : cell.value,
       );
     }
     inputs.push(inputRow);
     values.push(valueRow);
+    positions.push(positionRow);
   }
-  return { origin: start, inputs, tsv: encodeTSV(values) };
+  return { origin: position(start), positions, inputs, tsv: encodeTSV(values) };
 }
 export function pasteCells(
   text: string,
   target: Address,
   internal?: ClipboardData | null,
+  position: (address: Address) => Address = (address) => address,
 ): CellPatch[] {
   const matching = internal?.tsv === text ? internal : null;
   const rows = matching ? matching.inputs : decodeTSV(text).map((row) => row.map(parseInput));
   if (rows.reduce((sum, row) => sum + row.length, 0) > 10000)
     throw new Error('Clipboard limit is 10,000 cells');
   return rows.flatMap((row, r) =>
-    row.map((input, c) => ({
-      row: target.row + r,
-      col: target.col + c,
-      input:
-        matching && typeof input === 'string'
-          ? shiftFormula(input, target.row - matching.origin.row, target.col - matching.origin.col)
-          : input,
-    })),
+    row.map((input, c) => {
+      const destination = position({ row: target.row + r, col: target.col + c });
+      const origin = matching?.positions?.[r]?.[c] ?? {
+        row: (matching?.origin.row ?? 0) + r,
+        col: (matching?.origin.col ?? 0) + c,
+      };
+      return {
+        row: target.row + r,
+        col: target.col + c,
+        input:
+          matching && typeof input === 'string'
+            ? shiftFormula(input, destination.row - origin.row, destination.col - origin.col)
+            : input,
+      };
+    }),
   );
 }

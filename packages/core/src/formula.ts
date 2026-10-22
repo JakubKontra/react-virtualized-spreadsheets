@@ -14,6 +14,7 @@ export type Expression =
   | { type: 'literal'; value: CellValue }
   | Ref
   | { type: 'range'; start: Ref; end: Ref }
+  | { type: 'union'; items: Expression[] }
   | { type: 'unary'; op: string; value: Expression }
   | { type: 'binary'; op: string; left: Expression; right: Expression }
   | { type: 'call'; name: string; args: Expression[] };
@@ -110,6 +111,14 @@ export function parseFormula(formula: string): Expression {
         left = { type: 'unary', op: token.text, value: expression(5) };
       else if (token.text === '(') {
         left = expression();
+        if (tokens[pos]?.text === ',') {
+          const items = [left];
+          while (tokens[pos]?.text === ',') {
+            pos++;
+            items.push(expression());
+          }
+          left = { type: 'union', items };
+        }
         expect(')');
       } else if (token.kind === 'name') {
         const name = token.text.toUpperCase();
@@ -165,6 +174,7 @@ export function dependencies(expr: Expression): { cells: Address[]; ranges: Cell
       visit(node.right);
     } else if (node.type === 'unary') visit(node.value);
     else if (node.type === 'call') node.args.forEach(visit);
+    else if (node.type === 'union') node.items.forEach(visit);
   }
   visit(expr);
   return { cells, ranges };
@@ -203,6 +213,7 @@ export function evaluate(
   expr: Expression,
   read: (address: Address) => CellValue,
   bounds: { rows: number; columns: number },
+  present: (address: Address) => boolean = () => true,
 ): CellValue {
   const valid = (address: Address) =>
     address.row >= 0 &&
@@ -214,10 +225,11 @@ export function evaluate(
       case 'literal':
         return node.value;
       case 'ref':
-        return valid(node.address)
+        return valid(node.address) && present(node.address)
           ? read(node.address)
           : formulaError('#REF!', 'Reference is outside the sheet');
       case 'range':
+      case 'union':
         return formulaError('#VALUE!', 'A range must be used inside an aggregate');
       case 'unary': {
         const value = numeric(ev(node.value));
@@ -289,20 +301,35 @@ export function evaluate(
           }
           return null;
         }
-        for (const arg of node.args) {
-          if (arg.type === 'range') {
+        let members = 0;
+        function collect(arg: Expression): CellValue {
+          if (arg.type === 'union') {
+            for (const item of arg.items) {
+              const error = collect(item);
+              if (error) return error;
+            }
+          } else if (arg.type === 'range') {
             const range = normalizeRange({ start: arg.start.address, end: arg.end.address });
             if (!valid(range.start) || !valid(range.end))
               return formulaError('#REF!', 'Range is outside the sheet');
             for (let row = range.start.row; row <= range.end.row; row++)
               for (let col = range.start.col; col <= range.end.col; col++) {
+                if (!present({ row, col })) continue;
+                members++;
                 const error = add(read({ row, col }));
                 if (error) return error;
               }
           } else {
-            const error = add(ev(arg));
-            if (error) return error;
+            members++;
+            return add(ev(arg));
           }
+          return null;
+        }
+        for (const arg of node.args) {
+          const before = members;
+          const error = collect(arg);
+          if (error) return error;
+          if (members === before) return formulaError('#REF!', 'All range members were removed');
         }
         const result =
           node.name === 'COUNT'

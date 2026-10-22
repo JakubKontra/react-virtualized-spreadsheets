@@ -1,10 +1,18 @@
 import { parentPort, workerData } from 'node:worker_threads';
-import { EngineSession, parseFormula, isError, type CellRange, type Mutation } from '@sheet/core';
+import {
+  EngineSession,
+  ViewCalculationRegistry,
+  parseFormula,
+  isError,
+  type CellRange,
+  type Mutation,
+} from '@sheet/core';
 import { createSalesEngine } from '../../shared/sales';
 
 const rows: number = workerData.rows;
 const engine = createSalesEngine(rows);
 const session = new EngineSession(engine, ({ col }) => col >= 6, true);
+const views = new ViewCalculationRegistry(engine);
 const metadata = () => ({
   ...session.metadata,
   columnFormulas: Object.fromEntries(
@@ -19,6 +27,8 @@ parentPort!.on('message', ({ id, method, payload }) => {
     let result: unknown;
     if (method === 'meta') result = metadata();
     else if (method === 'block') result = session.block(payload as CellRange);
+    else if (method === 'viewBlocks')
+      result = views.blocks(payload.view, payload.ranges, session.revision);
     else if (method === 'mutate') {
       const data = payload as { mutation: Mutation; revision: number };
       if (

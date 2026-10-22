@@ -83,6 +83,7 @@ test('server mode computes unseen rows, preserves read-only data, and receives u
   await page.locator('[data-address="D1"]').dblclick();
   await expect(page.getByRole('alert')).toContainText('read-only');
   await page.getByRole('button', { name: 'Dismiss error' }).click();
+  await page.locator('[data-address="H1"]').click();
   await page.getByRole('button', { name: 'Add calculation' }).click();
   const editor = page.getByRole('textbox', { name: 'Edit I1', exact: true });
   await expect(editor).toHaveValue('=SUM($D$1:$D$1000000)');

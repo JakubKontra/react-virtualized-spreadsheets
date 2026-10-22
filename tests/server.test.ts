@@ -1,6 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDemoServer } from '../apps/server/src/server';
 import { createSalesEngine } from '../apps/shared/sales';
+import type { SheetViewState } from '../packages/core/src';
+import { HttpViewAdapter } from '../packages/transport/src/persistence';
 
 describe('demo server', () => {
   let app: Awaited<ReturnType<typeof createDemoServer>>;
@@ -62,5 +64,60 @@ describe('demo server', () => {
     expect(block.cells[0].value).toBe(4999998);
     controller.abort();
     await reader.cancel().catch(() => {});
+  });
+  it('persists isolated view versions and computes overlays without global writes', async () => {
+    const view: SheetViewState = {
+      schemaVersion: 1,
+      viewId: 'view-a',
+      sourceId: 'sales',
+      sourceRows: 1000000,
+      sourceColumns: 50,
+      revision: 0,
+      rows: {
+        order: [{ start: 0, count: 1000000 }],
+        hidden: [],
+        sizes: {},
+        owned: {},
+        nextIndex: 1000000,
+      },
+      columns: {
+        order: [{ start: 0, count: 50 }],
+        hidden: [],
+        sizes: {},
+        owned: { 9: { id: 'mine' } },
+        nextIndex: 50,
+      },
+      cells: {},
+      columnFormulas: { 9: '=SUM($D$1:$D$1000000)' },
+    };
+    const adapter = new HttpViewAdapter(`${base}/views`);
+    const signal = new AbortController().signal;
+    expect(await adapter.load(view.viewId, signal)).toBe(null);
+    const saved = await adapter.save(view, null, signal);
+    expect(await adapter.load(view.viewId, signal)).toEqual(saved);
+    await expect(adapter.save(view, null, signal)).rejects.toThrow('changed on the server');
+    const updated = await adapter.save({ ...view, revision: 1 }, saved.version, signal);
+    expect(updated.version).not.toBe(saved.version);
+    const second = { ...view, viewId: 'view-b', columnFormulas: { 9: '=D1*3' } };
+    async function value(state: SheetViewState) {
+      const response = await fetch(`${base}/view-blocks`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          view: state,
+          ranges: [{ start: { row: 0, col: 9 }, end: { row: 0, col: 9 } }],
+        }),
+      });
+      expect(response.status).toBe(200);
+      return (await response.json()).blocks[0].cells[0].value;
+    }
+    const sum = await value(view);
+    const other = await value(second);
+    expect(await value(view)).toBe(sum);
+    expect(other).not.toBe(sum);
+    const source = await (await fetch(`${base}/block?r0=0&r1=0&c0=9&c1=9`)).json();
+    expect(source.cells[0].input).toBe(null);
+    await app.request('tick');
+    expect(await value(view)).not.toBe(sum);
   });
 });

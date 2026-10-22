@@ -1,7 +1,9 @@
 import { createServer as createHttpServer, type ServerResponse } from 'node:http';
 import { Worker } from 'node:worker_threads';
+import { validateViewState, type PersistedView } from '@sheet/core';
 
 export async function createDemoServer(options: { rows?: number; tickMs?: number } = {}) {
+  const savedViews = new Map<string, PersistedView>();
   const worker = new Worker(new URL('./worker.mjs', import.meta.url), {
     workerData: { rows: options.rows ?? 1000000, tickMs: options.tickMs ?? 4000 },
   });
@@ -57,7 +59,37 @@ export async function createDemoServer(options: { rows?: number; tickMs?: number
       }
     };
     try {
-      if (url.pathname === '/api/meta' && req.method === 'GET') send(200, await request('meta'));
+      if (url.pathname.startsWith('/api/views/')) {
+        const id = decodeURIComponent(url.pathname.slice('/api/views/'.length));
+        if (req.method === 'GET') {
+          const view = savedViews.get(id);
+          send(view ? 200 : 404, view ?? { error: 'View not found' });
+        } else if (req.method === 'PUT') {
+          let body = '';
+          for await (const chunk of req) {
+            body += chunk;
+            if (body.length > 2000000) throw new Error('View exceeds 2 MB');
+          }
+          const data = JSON.parse(body);
+          validateViewState(data.state);
+          if (data.state.viewId !== id) throw new Error('View ID mismatch');
+          if ((savedViews.get(id)?.version ?? null) !== data.expectedVersion) {
+            send(409, { error: 'View version conflict' });
+            return;
+          }
+          const result = { state: data.state, version: crypto.randomUUID() };
+          savedViews.set(id, result);
+          send(200, result);
+        } else send(405, { error: 'Method not allowed' });
+      } else if (url.pathname === '/api/view-blocks' && req.method === 'POST') {
+        let body = '';
+        for await (const chunk of req) {
+          body += chunk;
+          if (body.length > 2000000) throw new Error('View exceeds 2 MB');
+        }
+        send(200, await request('viewBlocks', JSON.parse(body)));
+      } else if (url.pathname === '/api/meta' && req.method === 'GET')
+        send(200, await request('meta'));
       else if (url.pathname === '/api/block' && req.method === 'GET') {
         const param = (name: string) => {
           const raw = url.searchParams.get(name);

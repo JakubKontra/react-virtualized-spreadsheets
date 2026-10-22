@@ -3,3 +3,7 @@ export * from './formula';
 export * from './engine';
 export * from './clipboard';
 export * from './store';
+export * from './view';
+export * from './view-formula';
+export * from './view-engine';
+export * from './view-source';

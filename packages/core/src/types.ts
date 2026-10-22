@@ -1,3 +1,4 @@
+import type { SheetViewState, ViewController } from './view';
 export type CellInput = string | number | boolean | null;
 export type ErrorCode =
   '#ERROR!' | '#REF!' | '#VALUE!' | '#DIV/0!' | '#NAME?' | '#CYCLE!' | '#NUM!';
@@ -35,6 +36,7 @@ export interface DataBlock {
   revision: number;
 }
 export interface SourceEvent {
+  mappingChanged?: boolean;
   revision: number;
   connection?: 'connected' | 'disconnected';
   error?: string;
@@ -44,18 +46,29 @@ export interface Mutation {
   columns?: { col: number; formula: string | null }[];
 }
 export interface DataSource {
+  readonly view?: ViewController;
   readonly mode: 'local' | 'remote';
   readonly metadata: SheetMetadata;
   rowId(row: number): string;
   columnId(col: number): string;
   isEditable(address: Address): boolean;
   getBlock(range: CellRange, signal: AbortSignal): Promise<DataBlock>;
+  getViewBlocks?(
+    view: SheetViewState,
+    ranges: CellRange[],
+    signal: AbortSignal,
+  ): Promise<{ blocks: DataBlock[]; revision: number }>;
   mutate(mutation: Mutation, revision: number, signal: AbortSignal): Promise<{ revision: number }>;
   getColumnFormula(col: number): string | null;
   subscribe(listener: (event: SourceEvent) => void): () => void;
   dispose(): void;
 }
 export interface CalculationAdapter {
+  calculateView?(
+    view: SheetViewState,
+    ranges: CellRange[],
+    signal: AbortSignal,
+  ): Promise<{ blocks: DataBlock[]; revision: number }>;
   calculate(range: CellRange, signal: AbortSignal): Promise<DataBlock>;
   apply(mutation: Mutation, revision: number, signal: AbortSignal): Promise<{ revision: number }>;
   dispose(): void;

@@ -3,7 +3,6 @@ import {
   useEffect,
   useId,
   useRef,
-  useState,
   useSyncExternalStore,
   type ClipboardEvent,
   type HTMLAttributes,
@@ -12,9 +11,9 @@ import {
   type RefObject,
 } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
+import { useSheetGestures } from './gestures';
 import {
   CLIPBOARD_MIME,
-  addressLabel,
   contains,
   normalizeRange,
   parseInput,
@@ -53,12 +52,24 @@ export function useSpreadsheet({
 }: UseSpreadsheetOptions) {
   const state = useSpreadsheetState(store);
   const prefix = useId().replaceAll(':', '');
-  const dragging = useRef(false);
-  const [draft, setDraft] = useState('');
+  const draft = state.draft ?? '';
+  const setDraft = (value: string) => store.setDraft(value);
+  const viewState = store.view?.getSnapshot();
+  const rowSize = useCallback(
+    (index: number) => store.view?.rows.size(index, rowHeight) ?? rowHeight,
+    [store, rowHeight, viewState?.rows],
+  );
+  const colSize = useCallback(
+    (index: number) => {
+      const canonical = store.view?.columns.canonicalAt(index) ?? index;
+      return store.view?.columns.size(index, columnWidth(canonical)) ?? columnWidth(index);
+    },
+    [store, columnWidth, viewState?.columns],
+  );
   const rows = useVirtualizer({
     count: store.rows,
     getScrollElement: () => scrollRef.current,
-    estimateSize: () => rowHeight,
+    estimateSize: rowSize,
     overscan: 6,
     paddingStart: columnHeaderHeight,
     scrollPaddingStart: columnHeaderHeight,
@@ -67,7 +78,7 @@ export function useSpreadsheet({
     horizontal: true,
     count: store.columns,
     getScrollElement: () => scrollRef.current,
-    estimateSize: columnWidth,
+    estimateSize: colSize,
     overscan: 2,
     paddingStart: rowHeaderWidth,
     scrollPaddingStart: rowHeaderWidth,
@@ -83,19 +94,11 @@ export function useSpreadsheet({
       store.setViewport({ start: { row: r0, col: c0 }, end: { row: r1, col: c1 } });
   }, [store, r0, r1, c0, c1]);
   useEffect(() => {
-    const release = () => {
-      dragging.current = false;
-    };
-    window.addEventListener('pointerup', release);
-    window.addEventListener('blur', release);
-    return () => {
-      window.removeEventListener('pointerup', release);
-      window.removeEventListener('blur', release);
-    };
-  }, []);
+    rows.measure();
+  }, [rows, rowSize]);
   useEffect(() => {
     columns.measure();
-  }, [columns, columnWidth]);
+  }, [columns, colSize]);
   const selection = normalizeRange(state.selection);
   const cellId = (address: Address) => `${prefix}-cell-${address.row}-${address.col}`;
   const report = (promise: Promise<unknown>) => {
@@ -108,36 +111,88 @@ export function useSpreadsheet({
     columns.scrollToIndex(address.col, { align: 'auto' });
   }
   function select(address: Address, extend = false) {
+    store.assertAddress(address);
+    if (store.getSnapshot().editing) {
+      void commitEdit().then((ok) => {
+        if (ok) {
+          store.select(address, extend);
+          scrollToCell(address);
+        }
+      });
+      return;
+    }
     store.select(address, extend);
     scrollToCell(address);
   }
-  function startEdit(initial?: string, address = state.selection.end) {
-    store.beginEdit(address);
-    if (store.getSnapshot().editing)
-      setDraft(initial ?? String(store.readCell(address).input ?? ''));
+  function startEdit(initial?: string, address = state.active) {
+    store.beginEdit(address, initial);
   }
-  async function commitEdit(text = draft, move = false) {
-    const address = store.getSnapshot().editing ?? store.getSnapshot().selection.end;
-    const input = parseInput(text);
-    try {
-      if (store.source.mode === 'remote') {
-        if (input !== null && (typeof input !== 'string' || !input.startsWith('=')))
-          throw new Error('Calculated columns require a formula starting with =');
-        await store.setColumnFormula(
-          address.col,
-          input === null ? null : shiftFormula(input as string, -address.row, 0),
-        );
-      } else await store.edit([{ ...address, input }]);
-      if (move) select({ row: Math.min(store.rows - 1, address.row + 1), col: address.col });
-      focus();
-    } catch (error) {
-      store.setError(error);
+  const committing = useRef<Promise<boolean> | null>(null);
+  function commitEdit(
+    text = store.getSnapshot().draft ?? '',
+    move = false,
+    restoreFocus = true,
+  ): Promise<boolean> {
+    if (committing.current) return committing.current;
+    const snapshot = store.getSnapshot();
+    if (!snapshot.editing && text === '') return Promise.resolve(true);
+    const address = snapshot.editing ?? snapshot.active;
+    committing.current = (async () => {
+      const input = parseInput(text);
+      try {
+        if (String(store.readCell(address).input ?? '') !== text) {
+          if (store.source.mode === 'remote' && !store.view) {
+            if (input !== null && (typeof input !== 'string' || !input.startsWith('=')))
+              throw new Error('Calculated columns require a formula starting with =');
+            await store.setColumnFormula(
+              address.col,
+              input === null ? null : shiftFormula(input as string, -address.row, 0),
+            );
+          } else await store.edit([{ ...address, input }]);
+        } else store.cancelEdit();
+        if (move) {
+          const next = { row: Math.min(store.rows - 1, address.row + 1), col: address.col };
+          store.select(next);
+          scrollToCell(next);
+        }
+        if (restoreFocus) focus();
+        return true;
+      } catch (error) {
+        store.setError(error);
+        return false;
+      }
+    })();
+    void committing.current.finally(() => {
+      committing.current = null;
+    });
+    return committing.current;
+  }
+  function axisItem(axis: 'rows' | 'columns', index: number) {
+    if (axis === 'columns') {
+      let start = rowHeaderWidth;
+      for (let c = 0; c < index; c++) start += colSize(c);
+      return { index, start, size: colSize(index), end: start + colSize(index) };
     }
+    let start = columnHeaderHeight + index * rowHeight;
+    for (const [key, size] of Object.entries(viewState?.rows.sizes ?? {})) {
+      const position = store.view!.rows.visibleIndex(Number(key));
+      if (position >= 0 && position < index) start += size - rowHeight;
+    }
+    return { index, start, size: rowSize(index), end: start + rowSize(index) };
   }
+  const gestures = useSheetGestures({
+    store,
+    scrollRef,
+    rowHeaderWidth,
+    columnHeaderHeight,
+    commit: () => commitEdit(),
+    item: axisItem,
+    itemAt: (axis, offset) => (axis === 'rows' ? rows : columns).getVirtualItemForOffset(offset),
+  });
   const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
     if (event.target !== event.currentTarget || event.nativeEvent.isComposing) return;
     const mod = event.metaKey || event.ctrlKey;
-    const current = state.selection.end;
+    const current = state.active;
     if (mod && event.key.toLowerCase() === 'z') {
       event.preventDefault();
       report(event.shiftKey ? store.redo() : store.undo());
@@ -150,8 +205,24 @@ export function useSpreadsheet({
     }
     if (mod && event.key.toLowerCase() === 'a') {
       event.preventDefault();
-      store.select({ row: 0, col: 0 });
-      store.select({ row: store.rows - 1, col: store.columns - 1 }, true);
+      store.selectAll();
+      return;
+    }
+    if (event.key === ' ' && (event.shiftKey || mod)) {
+      event.preventDefault();
+      store.selectAxis(mod ? 'columns' : 'rows', mod ? current.col : current.row);
+      return;
+    }
+    if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
+      event.preventDefault();
+      const rect = scrollRef.current?.getBoundingClientRect();
+      if (rect)
+        void gestures.openMenu(
+          state.selectionKind === 'rows' ? 'rows' : 'columns',
+          state.selectionKind === 'rows' ? current.row : current.col,
+          rect.left + rowHeaderWidth,
+          rect.top + columnHeaderHeight,
+        );
       return;
     }
     let { row, col } = current;
@@ -225,9 +296,9 @@ export function useSpreadsheet({
     'aria-colcount': store.columns,
     'aria-multiselectable': true,
     'aria-activedescendant':
-      virtualRows.some((row) => row.index === state.selection.end.row) &&
-      virtualColumns.some((col) => col.index === state.selection.end.col)
-        ? cellId(state.selection.end)
+      virtualRows.some((row) => row.index === state.active.row) &&
+      virtualColumns.some((col) => col.index === state.active.col)
+        ? cellId(state.active)
         : undefined,
     onKeyDown,
     onCopy(event: ClipboardEvent<HTMLElement>) {
@@ -263,7 +334,7 @@ export function useSpreadsheet({
       'aria-colindex': address.col + 1,
       'aria-selected': contains(selection, address),
       'aria-readonly': !store.source.isEditable(address),
-      'data-address': addressLabel(address),
+      'data-address': store.labelAddress(address),
       onPointerDown(event) {
         if (event.button !== 0) return;
         event.preventDefault();
@@ -277,22 +348,26 @@ export function useSpreadsheet({
           });
           return;
         }
-        dragging.current = true;
         store.select(address, event.shiftKey);
+        gestures.startSelection(event);
         focus();
-      },
-      onPointerEnter() {
-        if (dragging.current) store.select(address, true);
       },
       onDoubleClick() {
         startEdit(undefined, address);
       },
     };
   }
-  const editorProps: InputHTMLAttributes<HTMLInputElement> = {
-    'aria-label': state.editing ? `Edit ${addressLabel(state.editing)}` : 'Cell editor',
+  type EditorProps = InputHTMLAttributes<HTMLInputElement> & { 'data-sheet-editor': string };
+  const isOtherEditor = (element: EventTarget | null) =>
+    element instanceof HTMLElement && element.dataset.sheetEditor === prefix;
+  const editorProps: EditorProps = {
+    'data-sheet-editor': prefix,
+    'aria-label': state.editing ? `Edit ${store.labelAddress(state.editing)}` : 'Cell editor',
     value: draft,
     disabled: state.pending,
+    onBlur(event) {
+      if (!isOtherEditor(event.relatedTarget)) void commitEdit(undefined, false, false);
+    },
     onChange: (event) => setDraft(event.target.value),
     onKeyDown(event) {
       event.stopPropagation();
@@ -320,18 +395,46 @@ export function useSpreadsheet({
       }
     },
   };
+  const activeCell = useCell(store, state.active.row, state.active.col);
+  const formulaBarProps: EditorProps = {
+    'data-sheet-editor': prefix,
+    'aria-label': 'Formula bar',
+    value: state.editing ? draft : String(activeCell.input ?? ''),
+    disabled:
+      !store.source.isEditable(state.active) ||
+      state.pending ||
+      activeCell.status === 'loading' ||
+      activeCell.status === 'calculating',
+    onFocus() {
+      store.beginEdit(store.getSnapshot().active, undefined, 'bar');
+    },
+    onChange(event) {
+      store.setDraft(event.target.value);
+    },
+    onBlur(event) {
+      if (!isOtherEditor(event.relatedTarget)) void commitEdit(undefined, false, false);
+    },
+    onKeyDown(event) {
+      if (event.nativeEvent.isComposing) return;
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        void commitEdit();
+      } else if (event.key === 'Escape') {
+        event.preventDefault();
+        store.cancelEdit();
+        focus();
+      }
+    },
+  };
   function cellRect(address: Address) {
-    let left = rowHeaderWidth;
-    for (let col = 0; col < address.col; col++) left += columnWidth(col);
-    return {
-      left,
-      top: columnHeaderHeight + address.row * rowHeight,
-      width: columnWidth(address.col),
-      height: rowHeight,
-    };
+    const r = axisItem('rows', address.row);
+    const c = axisItem('columns', address.col);
+    return { left: c.start, top: r.start, width: c.size, height: r.size };
   }
+
   return {
     state,
+    gestures,
     selection,
     virtualRows,
     virtualColumns,
@@ -340,6 +443,7 @@ export function useSpreadsheet({
     gridProps,
     getCellProps,
     editorProps,
+    formulaBarProps,
     draft,
     setDraft,
     startEdit,

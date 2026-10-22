@@ -23,6 +23,7 @@ export interface EngineOptions {
   /** A synchronous, complete source. It must never return null for unloaded data. */
   readInput?: (address: Address) => CellInput;
   maxCachedFormulas?: number;
+  isPresent?: (address: Address) => boolean;
 }
 /** Sparse inputs, lazy formula columns, and bounded computed values. No React or DOM dependencies. */
 export class FormulaEngine {
@@ -138,6 +139,8 @@ export class FormulaEngine {
     }
   }
   value(address: Address, visiting = new Set<string>()): CellValue {
+    if (this.options.isPresent && !this.options.isPresent(address))
+      return formulaError('#REF!', 'Referenced item was removed');
     if (
       address.row < 0 ||
       address.col < 0 ||
@@ -158,7 +161,12 @@ export class FormulaEngine {
     else {
       visiting.add(key);
       this.evaluations++;
-      result = evaluate(expression, (ref) => this.value(ref, visiting), this);
+      result = evaluate(
+        expression,
+        (ref) => this.value(ref, visiting),
+        this,
+        this.options.isPresent,
+      );
       visiting.delete(key);
     }
     // Values remain valid within a revision. Once a dependency node is evicted,
