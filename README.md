@@ -17,7 +17,9 @@ Open **http://127.0.0.1:5173**. The demonstration API binds to `127.0.0.1:4317`;
 - **Live server:** 1,000,000 × 50 cells; six source columns are read-only. Editing a custom calculated column changes its template within this view. Upstream sales update every four seconds. **Add calculation** inserts a column beside the active cell with a sum over all source rows, including rows never loaded into the browser.
 - Drag a header handle to move rows/columns; a boundary line previews the drop. Shift-click headers for a block, drag their edge to resize, or open the header actions. Source items can be hidden/restored; inserted custom items can be removed. All changes are view-only and undoable.
 - Freeze rows/columns; drag the selection's fill handle to extend numbers, dates or relative formulas. Ctrl/⌘ D/R fills down/right.
-- The formula editor suggests functions, explains arguments and colors references. After `=`, an operator or an opening parenthesis, click/drag cells to insert a reference.
+- The formula editor suggests functions, explains arguments and colors references. After `=`, an operator or an opening parenthesis, click/drag cells to insert a reference. F4 (or **Toggle $ reference**) cycles absolute anchors in either editor; the floating help shows matching parentheses and syntax diagnostics without evaluating unfinished formulas.
+- **Paste special** captures Ctrl/⌘ V in a dialog and previews the target dimensions. Paste original contents, computed values, or only formulas; optionally transpose rows and columns. Formulas-only skips constants and leaves their targets unchanged. One Undo reverses the entire paste.
+- Formulas include `SUMIF`, `COUNTIF`, `IFERROR`, `ROUND`, `AND`, `OR` and `NOT`, alongside the original aggregates and `IF`. Conditional aggregates operate on the complete source, including unloaded rows.
 - **Sort & filter** combines up to three sort keys, eight filters and full-dataset text search. The footer calculates count, sum, average, minimum and maximum for the entire selection.
 - **Format** configures numbers, currencies, percentages, dates, checkboxes and choice lists, with conditional colors. **Views** (or the current view name) saves, duplicates, renames and switches workbook views.
 - Enter / F2 starts editing; Escape cancels; Tab / arrows navigate; Shift extends selection; Ctrl/⌘ C/V and Z/Shift-Z handle clipboard and history. The address box jumps directly to a cell.
@@ -72,7 +74,7 @@ const store = createSpreadsheet({
 // Later: store.dispose(); terminates the worker and subscriptions.
 ```
 
-Cells accept `string | number | boolean | null`. Strings beginning with `=` are formulas. Coordinates are zero-based. `columnFormulas` are templates anchored to row zero; relative references shift for each row. Per-cell inputs override a template in local mode. Clearing a generated local cell stores an explicit null override.
+Cells accept `string | number | boolean | null`. Strings beginning with `=` are formulas. A leading apostrophe escapes literal text: input `'=1+1` displays `=1+1`, and `''quoted` displays `'quoted`. The editor and persistence retain the escape character; calculated values do not. Coordinates are zero-based. `columnFormulas` are templates anchored to row zero; relative references shift for each row. Per-cell inputs override a template in local mode. Clearing a generated local cell stores an explicit null override.
 
 ## Render with your own components
 
@@ -138,7 +140,8 @@ The demo adds sticky headers, drag previews, header actions, a shared formula-ba
 ## Store and source contract
 
 - `store.select(address, extend?)`, `beginEdit()`, `cancelEdit()` control interaction state.
-- `store.edit(patches)` is one undoable transaction. `paste(text)`, `clearSelection()`, `undo()` and `redo()` are asynchronous. Catch rejected operations and surface `state.error`.
+- `store.edit(patches)` is one undoable transaction. `paste(text, options?)`, `clearSelection()`, `undo()` and `redo()` are asynchronous. Catch rejected operations and surface `state.error`.
+- `PasteOptions` accepts `mode: 'all' | 'values' | 'formulas'` (default `all`), `transpose` (default false), and `useInternalFormulas` (default true). The legacy boolean second argument remains supported. Browser integrations must enable internal data only when the clipboard's `CLIPBOARD_MIME` token matches `store.getClipboardToken()`; pass false for external text. Values mode uses typed results captured at copy time; formula mode skips non-formulas. Native Ctrl/⌘ V retains its existing behavior.
 - `store.setColumnFormula(col, formula | null)` updates a template. In remote mode, `useSpreadsheet().commitEdit()` converts a row-specific formula back to its first-row template.
 - `ensureRange(range)` preloads bounded blocks; `readCell(address)` returns a stable snapshot. Missing cells are `loading`, never zero. Existing results become `calculating` when invalidated.
 - `source.rowId()` and `columnId()` identify stable rows and columns. Configure `viewState` to enable structural operations. `store.changeView()` moves, inserts, hides, restores, removes custom items or resizes, with undo. `store.view` exposes the compact mapping; `logicalAddress()` / `labelAddress()` include hidden items.
