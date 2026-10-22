@@ -14,15 +14,15 @@ Raw results include timestamp, machine/runtime information, fixture dimensions a
 
 ## Recorded reference run
 
-2026-10-22, Apple M4 Max, macOS, Node 22.13.1, Chromium 156.0.8078.4. Browser measurements use the development build and a warm local dev server, with persistent view state and header interactions enabled.
+2026-10-22, Apple M4 Max, macOS, Node 22.13.1, Chromium 156.0.8078.4. Browser measurements use the development build and a warm local dev server, with persistent views, the new feature controls and selection summaries enabled. This timing run uses no active query or frozen panes; those interactions have separate browser correctness checks.
 
 | Measurement                                         | Result                              |
 | --------------------------------------------------- | ----------------------------------- |
-| First local data visible                            | 300 ms                              |
-| Local edit to next frame, p95                       | 48.8 ms                             |
+| First local data visible                            | 430 ms                              |
+| Local edit to next frame, p95                       | 51.8 ms                             |
 | Mounted data cells, initial / maximum during scroll | 242 / 330                           |
 | Client cache after scrolling                        | 48 blocks / 24,576 cells            |
-| Frame interval, p95 during large scroll jumps       | 31.5 ms                             |
+| Frame interval, p95 during large scroll jumps       | 54.4 ms                             |
 | Server mode at `AX1000000`                          | 276 mounted cells / 5 cached blocks |
 | Engine `SUM` over 100,000 numeric source cells      | 14.2 ms                             |
 | Engine `SUM` over 1,000,000 numeric source cells    | 113.8 ms                            |
@@ -35,6 +35,9 @@ The browser benchmark runs headless Chromium at 1440 × 1000 against Vite's deve
 
 ## Boundaries
 
+- Frozen panes use disjoint viewport rectangles and remain within the same cache budget. The browser test pins both axes, jumps to row 90,000, and checks bounded mounted cells.
+- Queries retain packed row indices plus an inverse index (about 8 MB for a million results) in the browser; source values remain in the worker/server. Stable sort temporarily allocates key arrays in the calculation worker. The registry caches up to eight views, each with at most one query projection.
+- Selection summaries aggregate the entire selected query result, not just cached cells. Broad searches and formula-heavy selections can take longer than direct edits.
 - Client cache: 48 blocks × 64 rows × 8 columns by default. The initial viewport requires only a handful of blocks. Requests are deduplicated, superseded viewport requests are aborted, and responses are guarded by generation/revision.
 - Formula cache: 10,000 values, 2,048 parsed expressions. Templates are shifted and evaluated lazily rather than materializing a formula object for every row.
 - Single source block: at most 20,000 cells. Clipboard/edit transactions: at most 10,000 cells.

@@ -16,9 +16,13 @@ Open **http://127.0.0.1:5173**. The demonstration API binds to `127.0.0.1:4317`;
 - **Local workbook:** 100,000 × 50 cells; edit any cell, use the formula bar, or paste a range. The fixture generates six source columns and two formula columns lazily in a browser worker.
 - **Live server:** 1,000,000 × 50 cells; six source columns are read-only. Editing a custom calculated column changes its template within this view. Upstream sales update every four seconds. **Add calculation** inserts a column beside the active cell with a sum over all source rows, including rows never loaded into the browser.
 - Drag a header handle to move rows/columns; a boundary line previews the drop. Shift-click headers for a block, drag their edge to resize, or open the header actions. Source items can be hidden/restored; inserted custom items can be removed. All changes are view-only and undoable.
+- Freeze rows/columns; drag the selection's fill handle to extend numbers, dates or relative formulas. Ctrl/⌘ D/R fills down/right.
+- The formula editor suggests functions, explains arguments and colors references. After `=`, an operator or an opening parenthesis, click/drag cells to insert a reference.
+- **Sort & filter** combines up to three sort keys, eight filters and full-dataset text search. The footer calculates count, sum, average, minimum and maximum for the entire selection.
+- **Format** configures numbers, currencies, percentages, dates, checkboxes and choice lists, with conditional colors. **Views** (or the current view name) saves, duplicates, renames and switches workbook views.
 - Enter / F2 starts editing; Escape cancels; Tab / arrows navigate; Shift extends selection; Ctrl/⌘ C/V and Z/Shift-Z handle clipboard and history. The address box jumps directly to a cell.
 
-The demo saves each local/server view separately in localStorage, including inputs, formulas, order, hidden items and sizes. Reload restores the view; undo history lasts for the current session. The generated sales source stays in memory. It does not connect to Cartop or modify real sales records.
+The demo saves each local/server view separately in localStorage, including inputs, formulas, order, hidden items, sizes, queries, formats and frozen panes. Reload restores the view; undo history lasts for the current session. The generated sales source stays in memory. It does not connect to Cartop or modify real sales records.
 
 ## Packages
 
@@ -169,9 +173,9 @@ Without `viewState`, mutations use the original source revision contract. With `
 
 ## Formula semantics and performance
 
-See [formula support](docs/formulas.md) and [performance methodology](docs/performance.md).
+See [formula support](docs/formulas.md), [feature APIs](docs/views.md#queries-formatting-and-frozen-panes) and [performance methodology](docs/performance.md).
 
-This version supports one sheet with variable row heights and column widths. Structural edits affect a view, not the source dataset. It does not include XLSX, charting, autofill, sorting/filtering, merged cells, freeze panes or collaborative editing. Formula syntax is a documented subset, not a drop-in Excel engine. Financial values use JavaScript floating-point arithmetic; formatting does not alter the underlying value.
+This version supports one sheet with variable row heights and column widths. Structural edits affect a view, not the source dataset. It does not include XLSX, charting, merged cells or collaborative editing. Conditional formatting currently supports comparisons, text matching and empty/nonempty checks. Freeze panes and formatting require a view-enabled store; the headless renderer controls how they appear. Formula syntax is a documented subset, not a drop-in Excel engine. Financial values use JavaScript floating-point arithmetic; formatting does not alter the underlying value.
 
 ## Verification
 
