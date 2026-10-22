@@ -33,6 +33,21 @@ The engine benchmark exercises 100,000 × 50 and 1,000,000 × 50 logical grids w
 
 The browser benchmark runs headless Chromium at 1440 × 1000 against Vite's development server. It records navigation-to-first-data time, 40 local edit-to-next-frame samples, frame intervals during 120 large scroll jumps, DOM cell count, client cache size and the available Chromium heap estimate. It then navigates to `AX1000000` in server mode. It asserts local edit p95 below 100 ms, fewer than 600 mounted data cells for this viewport, and no more than 48 cached blocks. These thresholds are reference-machine checks, not a hardware-independent service guarantee.
 
+## shadcn renderer comparison
+
+2026-10-22, same machine, Chromium and viewport as above. Before/after runs use the existing browser benchmark with no active queries or pinned panes. These are individual development-build runs, not repeated statistical trials.
+
+| Measurement                                | Previous demo renderer | `@sheet/ui` renderer |
+| ------------------------------------------ | ---------------------- | -------------------- |
+| First local data                           | 322 ms                 | 362 ms               |
+| Local edit to next frame, p95              | 52.7 ms                | 62.4 ms              |
+| Large scroll-jump frame interval, p95      | 31.5 ms                | 47.5 ms              |
+| Mounted cells, initial / maximum on scroll | 242 / 330              | 242 / 330            |
+| Cache after scrolling                      | 48 blocks              | 48 blocks            |
+| Million-row source at `AX1000000`          | 276 cells / 5 blocks   | 276 cells / 5 blocks |
+
+The UI integration preserves the DOM/cache bounds and passes the existing edit-latency target; these runs show higher edit and scroll latency than the former renderer. Settings are deferred to a separate chunk, toolbar controls skip viewport-only renders, and virtual cells do not mount tooltip or menu providers. There is no claim of 60 fps during large jumps. Both frontend builds currently produce an initial JavaScript chunk around 537–541 kB (about 170–172 kB gzip); Vite reports its default 500 kB chunk-size advisory. Measure the production app on target devices before setting stricter budgets.
+
 ## Boundaries
 
 - Frozen panes use disjoint viewport rectangles and remain within the same cache budget. The browser test pins both axes, jumps to row 90,000, and checks bounded mounted cells.

@@ -1,6 +1,6 @@
 # Ledger · React spreadsheets
 
-A headless TypeScript spreadsheet with two-axis virtualization, a small formula engine, and interchangeable local-worker / server data sources. The styled sales workbook is an example renderer, not part of the component library.
+A headless TypeScript spreadsheet with two-axis virtualization, a small formula engine, and interchangeable local-worker / server data sources. The optional `@sheet/ui` package adds a reusable shadcn/ui renderer; the sales workbook demonstrates its integration.
 
 ## Run
 
@@ -32,9 +32,10 @@ The demo saves each local/server view separately in localStorage, including inpu
 | ------------------ | ----------------------------------------------------------------------------------------------------------------------- |
 | `@sheet/core`      | Sparse formula engine, compact view state, dependency graph, block cache, selection, transactions, clipboard, undo/redo |
 | `@sheet/react`     | `useSpreadsheet`, `useCell`, `useSpreadsheetState`; virtual viewport and unstyled interaction props                     |
+| `@sheet/ui`        | Optional shadcn/ui renderer, scoped theme styles, dialogs and header actions; consumer-owned Tailwind 4                 |
 | `@sheet/transport` | Browser worker RPC, HTTP/SSE, localStorage/HTTP view persistence; no browser globals at module import                   |
 
-`pnpm build` generates ESM and TypeScript declarations for all three packages and the demonstration frontend. React 18+ is a peer dependency. These packages are workspace packages; they have not been published to npm.
+`pnpm build` generates ESM and TypeScript declarations for all four packages and both example frontends. The headless hooks support React 18+; `@sheet/ui` requires React 19+ and Tailwind 4. These packages are workspace packages; they have not been published to npm.
 
 ## Supply local data
 
@@ -75,6 +76,10 @@ const store = createSpreadsheet({
 ```
 
 Cells accept `string | number | boolean | null`. Strings beginning with `=` are formulas. A leading apostrophe escapes literal text: input `'=1+1` displays `=1+1`, and `''quoted` displays `'quoted`. The editor and persistence retain the escape character; calculated values do not. Coordinates are zero-based. `columnFormulas` are templates anchored to row zero; relative references shift for each row. Per-cell inputs override a template in local mode. Clearing a generated local cell stores an explicit null override.
+
+## Render with shadcn/ui
+
+Import `tailwindcss` and `@sheet/ui/styles.css` in your application CSS, then render `<Spreadsheet store={store} />` from `@sheet/ui`. The host owns the store, optional persistence and custom toolbar actions. See [UI integration](docs/ui.md) for setup, props, theme tokens and the independent two-spreadsheet example.
 
 ## Render with your own components
 
@@ -133,9 +138,9 @@ function Grid({ store }: { store: SpreadsheetStore }) {
 }
 ```
 
-The editor is outside virtualized rows, so manual scrolling does not discard its draft or focus. Keep `columnWidth` callbacks stable. `useCell` subscribes to one cell, independently of selection and viewport subscriptions. The library does not require a stylesheet, component kit, router, or React context provider.
+The editor is outside virtualized rows, so manual scrolling does not discard its draft or focus. Keep `columnWidth` callbacks stable. `useCell` subscribes to one cell, independently of selection and viewport subscriptions. The headless packages do not require a stylesheet, component kit, router, or React context provider.
 
-The demo adds sticky headers, drag previews, header actions, a shared formula-bar draft, focus styling, save/error/connection states and keyboard hints. `grid.gestures` exposes unstyled header, drag and resize props plus preview geometry. See [view state and persistence](docs/views.md) for the full contract. The returned grid and cell props include ARIA row/column counts, indexes, active descendant, selection and read-only state. Screen-reader behavior across browser combinations has not been manually audited.
+The optional UI renderer adds sticky headers, drag previews, header actions, a shared formula-bar draft, focus styling, save/error/connection states and keyboard hints. `grid.gestures` exposes unstyled header, drag and resize props plus preview geometry. See [view state and persistence](docs/views.md) for the full contract. The returned grid and cell props include ARIA row/column counts, indexes, active descendant, selection and read-only state. Screen-reader behavior across browser combinations has not been manually audited.
 
 ## Store and source contract
 
@@ -188,6 +193,7 @@ pnpm test
 pnpm build
 pnpm exec playwright install chromium
 pnpm test:e2e
+pnpm test:ui-package
 pnpm benchmark
 pnpm benchmark:browser
 ```
