@@ -9,6 +9,7 @@ Inputs beginning with `=` are parsed into an AST and interpreted. The engine nev
 | Booleans                | `TRUE`, `FALSE` (case insensitive)                                |
 | Cell references         | `A1`, `$A$1`, `A$1`, `$A1`; single sheet only                     |
 | Ranges                  | `A1:B100`; inclusive rectangle; reversed endpoints are normalized |
+| Unions                  | `SUM((A1:A3,A8:A9))`; preserves a moved range’s membership        |
 | Operators               | `+ - * / ^ % & = <> < > <= >=`; unary `+`/`-`; parentheses        |
 | `SUM`                   | Adds numeric values; ignores text, booleans and blanks            |
 | `AVERAGE`               | Mean of numeric values; no numbers returns `#DIV/0!`              |
@@ -44,4 +45,12 @@ Direct dependencies and range dependencies are recorded separately. A range is n
 
 Internal copying preserves formulas and adjusts relative references; `$` anchors stay fixed. Quoted text that happens to look like an address is unchanged. External TSV copying uses displayed raw values (without currency formatting), and external paste parses numbers, booleans and formulas. TSV handles tabs, newlines and doubled quotes in quoted fields. The React clipboard handler uses a custom MIME token to identify this store's latest copy; identical text copied from another application does not accidentally restore an old formula. If the browser removes the custom MIME format, paste falls back to values. Imperative callers can use `paste(text, false)` to explicitly paste external text.
 
-Local per-cell edits can override a column template. In server mode, editing any calculated-column cell updates that column's template: `=D5*E5` edited at row 5 is stored as `=D1*E1`. Absolute references stay anchored. Pasting into multiple rows of one server column requires all pasted formulas to normalize to the same template; inconsistent formulas or literal values are rejected atomically. Delete clears the selected calculated column templates. Source cells are read-only. All these writes are atomic, revision checked and undoable within the current client session.
+Local per-cell edits can override a column template. In server mode, editing any calculated-column cell updates that column's template: `=D5*E5` edited at row 5 is stored as `=D1*E1`. Absolute references stay anchored. Pasting into multiple rows of one server column requires all pasted formulas to normalize to the same template; inconsistent formulas or literal values are rejected atomically. Delete clears cells within the edit limit; in server mode these edits clear the affected calculated column templates. Source cells are read-only; custom view rows can contain values. All these writes are atomic, revision checked and undoable within the current client session.
+
+## References in a view
+
+Formulas are stored against stable canonical source/custom identities. The formula bar shows A1 labels in the current logical order, including hidden items. Moving a referenced row or column changes the displayed reference without changing its target or calculated result. Hidden rows remain part of aggregates. A jump to a hidden address is rejected; restore the row or column to navigate to it.
+
+Ranges retain the membership they had when entered. Reordering or inserting between those members may display a union such as `=SUM((A1:A2,A5:A5))`; a newly inserted row does not silently join an existing range. Removing a custom item makes direct references `#REF!`. Ranges omit removed members, returning `#REF!` if the entire range is gone. Undo restores identities and references. Source items are hidden rather than removed.
+
+Binding and display use the parser, so structural changes may normalize parentheses and whitespace. Relative clipboard offsets use logical positions, including hidden rows/columns. `$` anchors continue to control copying; they do not prevent a reference from following a moved identity. Column templates shift in canonical source-row space, so a calculation remains attached to its record after row reorder. Custom-row per-cell values can override templates in both modes.

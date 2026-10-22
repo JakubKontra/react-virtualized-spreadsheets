@@ -14,18 +14,19 @@ pnpm dev
 Open **http://127.0.0.1:5173**. The demonstration API binds to `127.0.0.1:4317`; set `SHEET_PORT` for both processes to change it.
 
 - **Local workbook:** 100,000 × 50 cells; edit any cell, use the formula bar, or paste a range. The fixture generates six source columns and two formula columns lazily in a browser worker.
-- **Live server:** 1,000,000 × 50 cells; six source columns are read-only. Editing G–AX changes that entire calculated column. Upstream sales update every four seconds. **Add calculation** inserts a sum over all source rows, including rows never loaded into the browser.
+- **Live server:** 1,000,000 × 50 cells; six source columns are read-only. Editing a custom calculated column changes its template within this view. Upstream sales update every four seconds. **Add calculation** inserts a column beside the active cell with a sum over all source rows, including rows never loaded into the browser.
+- Drag a header handle to move rows/columns; a boundary line previews the drop. Shift-click headers for a block, drag their edge to resize, or open the header actions. Source items can be hidden/restored; inserted custom items can be removed. All changes are view-only and undoable.
 - Enter / F2 starts editing; Escape cancels; Tab / arrows navigate; Shift extends selection; Ctrl/⌘ C/V and Z/Shift-Z handle clipboard and history. The address box jumps directly to a cell.
 
-This is an in-memory demonstration. Reloading loses edits. It does not connect to Cartop or modify real sales records.
+The demo saves each local/server view separately in localStorage, including inputs, formulas, order, hidden items and sizes. Reload restores the view; undo history lasts for the current session. The generated sales source stays in memory. It does not connect to Cartop or modify real sales records.
 
 ## Packages
 
-| Package            | Responsibility                                                                                                           |
-| ------------------ | ------------------------------------------------------------------------------------------------------------------------ |
-| `@sheet/core`      | Sparse formula engine, dependency graph, revisioned sessions, block cache, selection, transactions, clipboard, undo/redo |
-| `@sheet/react`     | `useSpreadsheet`, `useCell`, `useSpreadsheetState`; virtual viewport and unstyled interaction props                      |
-| `@sheet/transport` | Browser worker RPC and HTTP/SSE adapters; no browser globals accessed at module import                                   |
+| Package            | Responsibility                                                                                                          |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------------- |
+| `@sheet/core`      | Sparse formula engine, compact view state, dependency graph, block cache, selection, transactions, clipboard, undo/redo |
+| `@sheet/react`     | `useSpreadsheet`, `useCell`, `useSpreadsheetState`; virtual viewport and unstyled interaction props                     |
+| `@sheet/transport` | Browser worker RPC, HTTP/SSE, localStorage/HTTP view persistence; no browser globals at module import                   |
 
 `pnpm build` generates ESM and TypeScript declarations for all three packages and the demonstration frontend. React 18+ is a peer dependency. These packages are workspace packages; they have not been published to npm.
 
@@ -128,7 +129,7 @@ function Grid({ store }: { store: SpreadsheetStore }) {
 
 The editor is outside virtualized rows, so manual scrolling does not discard its draft or focus. Keep `columnWidth` callbacks stable. `useCell` subscribes to one cell, independently of selection and viewport subscriptions. The library does not require a stylesheet, component kit, router, or React context provider.
 
-The demo adds sticky headers, focus styling, a formula bar, loading/error/connection states and keyboard hints. The returned grid and cell props include ARIA row/column counts, indexes, active descendant, selection and read-only state. Screen-reader behavior across browser combinations has not been manually audited.
+The demo adds sticky headers, drag previews, header actions, a shared formula-bar draft, focus styling, save/error/connection states and keyboard hints. `grid.gestures` exposes unstyled header, drag and resize props plus preview geometry. See [view state and persistence](docs/views.md) for the full contract. The returned grid and cell props include ARIA row/column counts, indexes, active descendant, selection and read-only state. Screen-reader behavior across browser combinations has not been manually audited.
 
 ## Store and source contract
 
@@ -136,7 +137,7 @@ The demo adds sticky headers, focus styling, a formula bar, loading/error/connec
 - `store.edit(patches)` is one undoable transaction. `paste(text)`, `clearSelection()`, `undo()` and `redo()` are asynchronous. Catch rejected operations and surface `state.error`.
 - `store.setColumnFormula(col, formula | null)` updates a template. In remote mode, `useSpreadsheet().commitEdit()` converts a row-specific formula back to its first-row template.
 - `ensureRange(range)` preloads bounded blocks; `readCell(address)` returns a stable snapshot. Missing cells are `loading`, never zero. Existing results become `calculating` when invalidated.
-- `source.rowId()` and `columnId()` identify stable rows and columns. Reordering and structural changes are outside this version.
+- `source.rowId()` and `columnId()` identify stable rows and columns. Configure `viewState` to enable structural operations. `store.changeView()` moves, inserts, hides, restores, removes custom items or resizes, with undo. `store.view` exposes the compact mapping; `logicalAddress()` / `labelAddress()` include hidden items.
 - The default cache holds at most 48 blocks of 64 × 8 cells (24,576 snapshots). Each source response contains authoritative computed values and a monotonic revision. Late responses cannot overwrite newer data.
 - Editing/paste/delete is capped at 10,000 cells and history at 100 transactions. Selection is unrestricted; copying requires its cells to be loaded, and oversized copies show an error. The cache also bounds the size of ranges preloaded in one operation.
 - A disconnected server cannot accept edits. Rejected writes retain the user's draft and undo history. Live source changes are never added to local undo history.
@@ -164,13 +165,13 @@ The same-origin adapter uses browser fetch and EventSource. Factories can be inj
 
 For sales, keep row IDs and order stable for a sheet session. Formula evaluation belongs on the server with access to the complete dataset. If the backend only reads database pages, provide database-backed aggregation or a complete calculation service; never sum just the browser cache. The demo runs the shared JavaScript engine in a Node worker thread and generates the full synthetic dataset on demand. Its main HTTP thread remains available during calculations, but requests to the calculation worker are serialized.
 
-Revision conflicts preserve the current draft; refresh/retry against current data. In this single-user demo every write checks the current global revision. For production, use a server policy that distinguishes source-data updates from competing formula edits as appropriate. An aborted write may already have reached the server; refresh to discover its authoritative outcome.
+Without `viewState`, mutations use the original source revision contract. With `viewState`, calculations use an isolated overlay and never call source mutation endpoints. `POST /view-blocks` receives `{ view, ranges }` in canonical coordinates and returns `{ blocks, revision }` for the source revision. Persist view definitions separately using a versioned adapter; conflicts retain local changes. The demo exposes `GET/PUT /api/views/:viewId` backed by an in-memory map as a reference. See [the integration contract](docs/views.md).
 
 ## Formula semantics and performance
 
 See [formula support](docs/formulas.md) and [performance methodology](docs/performance.md).
 
-This version intentionally supports one sheet and fixed row heights. It does not include XLSX, charting, autofill, row insertion/deletion, sorting/filtering, merged cells, or collaborative editing. Formula syntax is a documented subset, not a drop-in Excel engine. Financial values use JavaScript floating-point arithmetic; formatting does not alter the underlying value.
+This version supports one sheet with variable row heights and column widths. Structural edits affect a view, not the source dataset. It does not include XLSX, charting, autofill, sorting/filtering, merged cells, freeze panes or collaborative editing. Formula syntax is a documented subset, not a drop-in Excel engine. Financial values use JavaScript floating-point arithmetic; formatting does not alter the underlying value.
 
 ## Verification
 
