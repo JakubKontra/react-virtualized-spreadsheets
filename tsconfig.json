@@ -14,7 +14,9 @@
     "paths": {
       "@sheet/core": ["packages/core/src/index.ts"],
       "@sheet/react": ["packages/react/src/index.ts"],
-      "@sheet/transport": ["packages/transport/src/index.ts"]
+      "@sheet/transport": ["packages/transport/src/index.ts"],
+      "@sheet/ui": ["packages/ui/src/index.ts"],
+      "@sheet/ui/*": ["packages/ui/src/*"]
     }
   },
   "include": ["packages", "apps", "tests", "benchmarks", "*.config.ts"]

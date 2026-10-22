@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState, useContext, type RefObject } from 'react';
 import { PastePanel } from './PastePanel';
 import {
   columnLabel,
@@ -9,10 +9,14 @@ import {
   type ViewQuery,
   type ViewSummary,
 } from '@sheet/core';
-import type { useSpreadsheet } from '@sheet/react';
-import { LocalStorageViewAdapter, type ViewPersistenceBinding } from '@sheet/transport';
+import type { SpreadsheetPersistence, SpreadsheetProps } from './types';
+import { SheetContext } from './context';
+import { Button } from './components/button';
+import { Input } from './components/input';
+import { Textarea } from './components/textarea';
+import { NativeSelect } from './components/native-select';
+import { Dialog, DialogContent, DialogTitle } from './components/dialog';
 
-type Sheet = ReturnType<typeof useSpreadsheet>;
 const operators: ColumnFilter['operator'][] = [
   'contains',
   'equals',
@@ -33,74 +37,35 @@ const operatorLabels = {
   empty: 'Is empty',
   notEmpty: 'Is not empty',
 };
-export function FeatureControls({
+export default function FeatureDialog({
+  panel,
   store,
-  sheet,
   saving,
+  views,
   onSwitchView,
+  close,
+  trigger,
 }: {
+  panel: 'query' | 'format' | 'views' | 'freeze' | 'paste';
   store: SpreadsheetStore;
-  sheet: Sheet;
-  saving: ViewPersistenceBinding;
-  onSwitchView: (id: string) => Promise<void>;
+  saving?: SpreadsheetPersistence;
+  views?: SpreadsheetProps['views'];
+  onSwitchView?: (id: string) => Promise<void>;
+  close: () => void;
+  trigger: RefObject<HTMLButtonElement | null>;
 }) {
-  const [panel, setPanel] = useState<'query' | 'format' | 'views' | 'freeze' | 'paste' | null>(
-    null,
-  );
-  const ref = useRef<HTMLDialogElement>(null),
-    trigger = useRef<HTMLButtonElement | null>(null);
-  useEffect(() => {
-    if (panel) ref.current?.showModal();
-  }, [panel]);
-  const close = () => {
-    ref.current?.close();
-    setPanel(null);
-    trigger.current?.focus();
-  };
-  const view = store.view!.getSnapshot();
   return (
-    <>
-      <div className="feature-actions">
-        {(['query', 'format', 'freeze', 'paste', 'views'] as const).map((key) => (
-          <button
-            key={key}
-            aria-haspopup="dialog"
-            onClick={(event) => {
-              trigger.current = event.currentTarget;
-              void sheet.commitEdit(undefined, false, false).then((ok) => {
-                if (ok) setPanel(key);
-              });
-            }}
-          >
-            {key === 'query'
-              ? 'Sort & filter'
-              : key === 'format'
-                ? 'Format'
-                : key === 'freeze'
-                  ? 'Freeze'
-                  : key === 'paste'
-                    ? 'Paste special'
-                    : (view.name ?? 'Views')}
-            {key === 'query' &&
-            (view.query?.sorts?.length || view.query?.filters?.length || view.query?.search)
-              ? ' •'
-              : ''}
-          </button>
-        ))}
-      </div>
+    <Dialog
+      open={!!panel}
+      onOpenChange={(open) => {
+        if (!open) close();
+      }}
+    >
       {panel && (
-        <dialog
-          className="feature-dialog"
-          ref={ref}
-          aria-labelledby="feature-title"
-          onCancel={close}
-          onClick={(e) => {
-            if (e.target === e.currentTarget) close();
-          }}
-        >
+        <DialogContent className="feature-dialog" showCloseButton={false} finalFocus={trigger}>
           <div className="feature-content">
             <div className="feature-heading">
-              <h2 id="feature-title">
+              <DialogTitle>
                 {panel === 'query'
                   ? 'Sort, filter & search'
                   : panel === 'format'
@@ -110,10 +75,10 @@ export function FeatureControls({
                       : panel === 'paste'
                         ? 'Paste special'
                         : 'Saved views'}
-              </h2>
-              <button aria-label="Close settings" onClick={close}>
+              </DialogTitle>
+              <Button variant="outline" aria-label="Close settings" onClick={close}>
                 ×
-              </button>
+              </Button>
             </div>
             {panel === 'query' ? (
               <QueryPanel store={store} close={close} />
@@ -124,20 +89,28 @@ export function FeatureControls({
             ) : panel === 'paste' ? (
               <PastePanel store={store} close={close} />
             ) : (
-              <ViewsPanel store={store} saving={saving} onSwitchView={onSwitchView} close={close} />
+              <ViewsPanel
+                store={store}
+                saving={saving!}
+                views={views!}
+                onSwitchView={onSwitchView!}
+                close={close}
+              />
             )}
           </div>
-        </dialog>
+        </DialogContent>
       )}
-    </>
+    </Dialog>
   );
 }
-function columns(store: SpreadsheetStore) {
+
+function columns(store: SpreadsheetStore, getColumnLabel?: (col: number) => string | undefined) {
   return Array.from({ length: store.columns }, (_, i) => {
     const id = store.view!.columns.canonicalAt(i);
+    const label = store.view!.getSnapshot().columns.owned[id]?.label ?? getColumnLabel?.(id);
     return {
       id,
-      label: `${columnLabel(store.view!.columns.logicalIndex(id))}${store.view!.getSnapshot().columns.owned[id]?.label ? ' · ' + store.view!.getSnapshot().columns.owned[id].label : ''}`,
+      label: `${columnLabel(store.view!.columns.logicalIndex(id))}${label ? ' · ' + label : ''}`,
     };
   });
 }
@@ -152,14 +125,19 @@ function ColumnSelect({
   onChange: (col: number) => void;
   label: string;
 }) {
+  const { getColumnLabel } = useContext(SheetContext);
   return (
-    <select aria-label={label} value={value} onChange={(e) => onChange(Number(e.target.value))}>
-      {columns(store).map((c) => (
+    <NativeSelect
+      aria-label={label}
+      value={value}
+      onChange={(e) => onChange(Number(e.target.value))}
+    >
+      {columns(store, getColumnLabel).map((c) => (
         <option key={c.id} value={c.id}>
           {c.label}
         </option>
       ))}
-    </select>
+    </NativeSelect>
   );
 }
 function QueryPanel({ store, close }: { store: SpreadsheetStore; close: () => void }) {
@@ -180,7 +158,7 @@ function QueryPanel({ store, close }: { store: SpreadsheetStore; close: () => vo
     >
       <label className="stack-field">
         Search all visible columns
-        <input
+        <Input
           autoFocus
           type="search"
           maxLength={200}
@@ -203,7 +181,7 @@ function QueryPanel({ store, close }: { store: SpreadsheetStore; close: () => vo
               })
             }
           />
-          <select
+          <NativeSelect
             aria-label={`Sort direction ${i + 1}`}
             value={sort.direction}
             onChange={(e) =>
@@ -217,17 +195,19 @@ function QueryPanel({ store, close }: { store: SpreadsheetStore; close: () => vo
           >
             <option value="asc">Ascending</option>
             <option value="desc">Descending</option>
-          </select>
-          <button
+          </NativeSelect>
+          <Button
+            variant="outline"
             type="button"
             aria-label={`Remove sort ${i + 1}`}
             onClick={() => setQuery({ ...query, sorts: query.sorts!.filter((_, j) => j !== i) })}
           >
             ×
-          </button>
+          </Button>
         </div>
       ))}
-      <button
+      <Button
+        variant="outline"
         type="button"
         disabled={(query.sorts?.length ?? 0) >= 3}
         onClick={() =>
@@ -235,7 +215,7 @@ function QueryPanel({ store, close }: { store: SpreadsheetStore; close: () => vo
         }
       >
         + Add sort
-      </button>
+      </Button>
       <h3>Filters · match all</h3>
       {(query.filters ?? []).map((filter, i) => (
         <div className="control-row filter-row" key={i}>
@@ -250,7 +230,7 @@ function QueryPanel({ store, close }: { store: SpreadsheetStore; close: () => vo
               })
             }
           />
-          <select
+          <NativeSelect
             aria-label={`Filter condition ${i + 1}`}
             value={filter.operator}
             onChange={(e) =>
@@ -267,9 +247,9 @@ function QueryPanel({ store, close }: { store: SpreadsheetStore; close: () => vo
                 {operatorLabels[op]}
               </option>
             ))}
-          </select>
+          </NativeSelect>
           {!['empty', 'notEmpty'].includes(filter.operator) && (
-            <input
+            <Input
               aria-label={`Filter value ${i + 1}`}
               value={String(filter.value ?? '')}
               onChange={(e) =>
@@ -282,7 +262,8 @@ function QueryPanel({ store, close }: { store: SpreadsheetStore; close: () => vo
               }
             />
           )}
-          <button
+          <Button
+            variant="outline"
             type="button"
             aria-label={`Remove filter ${i + 1}`}
             onClick={() =>
@@ -290,10 +271,11 @@ function QueryPanel({ store, close }: { store: SpreadsheetStore; close: () => vo
             }
           >
             ×
-          </button>
+          </Button>
         </div>
       ))}
-      <button
+      <Button
+        variant="outline"
         type="button"
         disabled={(query.filters?.length ?? 0) >= 8}
         onClick={() =>
@@ -304,14 +286,15 @@ function QueryPanel({ store, close }: { store: SpreadsheetStore; close: () => vo
         }
       >
         + Add filter
-      </button>
+      </Button>
       <p className="settings-note">
         Applies to the entire dataset. Row labels and formula references keep their original
         identities. Clear the query before moving or inserting rows.
       </p>
       {error && <p role="alert">{error}</p>}
       <div className="dialog-actions">
-        <button
+        <Button
+          variant="outline"
           type="button"
           onClick={() => {
             store.configure({ query: {} });
@@ -319,10 +302,10 @@ function QueryPanel({ store, close }: { store: SpreadsheetStore; close: () => vo
           }}
         >
           Clear query
-        </button>
-        <button className="primary" type="submit">
+        </Button>
+        <Button variant="default" type="submit">
           Apply query
-        </button>
+        </Button>
       </div>
     </form>
   );
@@ -345,7 +328,7 @@ function FreezePanel({ store, close }: { store: SpreadsheetStore; close: () => v
       <p>Keep the first rows and columns visible while scrolling.</p>
       <label className="stack-field">
         Frozen rows
-        <input
+        <Input
           autoFocus
           type="number"
           min={0}
@@ -356,7 +339,7 @@ function FreezePanel({ store, close }: { store: SpreadsheetStore; close: () => v
       </label>
       <label className="stack-field">
         Frozen columns
-        <input
+        <Input
           type="number"
           min={0}
           max={Math.min(store.columns, 10)}
@@ -369,7 +352,8 @@ function FreezePanel({ store, close }: { store: SpreadsheetStore; close: () => v
       </p>
       {error && <p role="alert">{error}</p>}
       <div className="dialog-actions">
-        <button
+        <Button
+          variant="outline"
           type="button"
           onClick={() => {
             store.configure({ frozen: { rows: 0, columns: 0 } });
@@ -377,10 +361,10 @@ function FreezePanel({ store, close }: { store: SpreadsheetStore; close: () => v
           }}
         >
           Unfreeze all
-        </button>
-        <button className="primary" type="submit">
+        </Button>
+        <Button variant="default" type="submit">
           Apply freeze
-        </button>
+        </Button>
       </div>
     </form>
   );
@@ -414,7 +398,7 @@ function FormatPanel({ store, close }: { store: SpreadsheetStore; close: () => v
       <p>Column {columnLabel(store.view!.columns.logicalIndex(col))} · applies to all rows</p>
       <label className="stack-field">
         Cell type
-        <select
+        <NativeSelect
           autoFocus
           value={option.kind}
           onChange={(e) => setOption({ ...option, kind: e.target.value as CellKind })}
@@ -424,12 +408,12 @@ function FormatPanel({ store, close }: { store: SpreadsheetStore; close: () => v
               <option key={kind}>{kind}</option>
             ),
           )}
-        </select>
+        </NativeSelect>
       </label>
       {['number', 'currency', 'percent'].includes(option.kind) && (
         <label className="stack-field">
           Decimal places
-          <input
+          <Input
             type="number"
             min={0}
             max={10}
@@ -441,20 +425,20 @@ function FormatPanel({ store, close }: { store: SpreadsheetStore; close: () => v
       {option.kind === 'currency' && (
         <label className="stack-field">
           Currency
-          <select
+          <NativeSelect
             value={option.currency ?? 'EUR'}
             onChange={(e) => setOption({ ...option, currency: e.target.value })}
           >
             {['EUR', 'CZK', 'USD', 'GBP'].map((c) => (
               <option key={c}>{c}</option>
             ))}
-          </select>
+          </NativeSelect>
         </label>
       )}
       {option.kind === 'select' && (
         <label className="stack-field">
           Choices (one per line)
-          <textarea
+          <Textarea
             value={option.options?.join('\n') ?? ''}
             onChange={(e) => setOption({ ...option, options: e.target.value.split('\n') })}
           />
@@ -463,7 +447,7 @@ function FormatPanel({ store, close }: { store: SpreadsheetStore; close: () => v
       <h3>Conditional formatting</h3>
       {rules.map((rule, i) => (
         <div className="control-row filter-row" key={rule.id}>
-          <select
+          <NativeSelect
             aria-label={`Rule condition ${i + 1}`}
             value={rule.operator}
             onChange={(e) =>
@@ -479,9 +463,9 @@ function FormatPanel({ store, close }: { store: SpreadsheetStore; close: () => v
                 {operatorLabels[op]}
               </option>
             ))}
-          </select>
+          </NativeSelect>
           {!['empty', 'notEmpty'].includes(rule.operator) && (
-            <input
+            <Input
               aria-label={`Rule value ${i + 1}`}
               value={String(rule.value ?? '')}
               onChange={(e) =>
@@ -489,7 +473,7 @@ function FormatPanel({ store, close }: { store: SpreadsheetStore; close: () => v
               }
             />
           )}
-          <input
+          <Input
             type="color"
             aria-label={`Rule background ${i + 1}`}
             value={rule.background}
@@ -497,7 +481,7 @@ function FormatPanel({ store, close }: { store: SpreadsheetStore; close: () => v
               setRules(rules.map((r, j) => (j === i ? { ...r, background: e.target.value } : r)))
             }
           />
-          <input
+          <Input
             type="color"
             aria-label={`Rule text color ${i + 1}`}
             value={rule.color}
@@ -505,16 +489,18 @@ function FormatPanel({ store, close }: { store: SpreadsheetStore; close: () => v
               setRules(rules.map((r, j) => (j === i ? { ...r, color: e.target.value } : r)))
             }
           />
-          <button
+          <Button
+            variant="outline"
             type="button"
             aria-label={`Remove rule ${i + 1}`}
             onClick={() => setRules(rules.filter((_, j) => j !== i))}
           >
             ×
-          </button>
+          </Button>
         </div>
       ))}
-      <button
+      <Button
+        variant="outline"
         type="button"
         disabled={rules.length >= 32}
         onClick={() =>
@@ -532,15 +518,15 @@ function FormatPanel({ store, close }: { store: SpreadsheetStore; close: () => v
         }
       >
         + Add rule
-      </button>
+      </Button>
       <p className="settings-note">
         The first matching rule wins. Types validate new inputs; existing values are preserved.
       </p>
       {error && <p role="alert">{error}</p>}
       <div className="dialog-actions">
-        <button className="primary" type="submit">
+        <Button variant="default" type="submit">
           Apply format
-        </button>
+        </Button>
       </div>
     </form>
   );
@@ -548,28 +534,25 @@ function FormatPanel({ store, close }: { store: SpreadsheetStore; close: () => v
 function ViewsPanel({
   store,
   saving,
+  views,
   onSwitchView,
   close,
 }: {
   store: SpreadsheetStore;
-  saving: ViewPersistenceBinding;
+  saving: SpreadsheetPersistence;
+  views: NonNullable<SpreadsheetProps['views']>;
   onSwitchView: (id: string) => Promise<void>;
   close: () => void;
 }) {
-  const [views, setViews] = useState<ViewSummary[]>([]),
-    [name, setName] = useState(store.view!.getSnapshot().name ?? 'October sales'),
+  const [savedViews, setViews] = useState<ViewSummary[]>([]),
+    [name, setName] = useState(store.view!.getSnapshot().name ?? 'Untitled view'),
     [error, setError] = useState(''),
     [busy, setBusy] = useState(false);
   useEffect(() => {
     const c = new AbortController();
     void saving
       .flush()
-      .then(() =>
-        new LocalStorageViewAdapter(localStorage).list(
-          store.view!.getSnapshot().sourceId,
-          c.signal,
-        ),
-      )
+      .then(() => views.list!(store.view!.getSnapshot().sourceId, c.signal))
       .then((v) => {
         if (!c.signal.aborted) setViews(v);
       })
@@ -577,7 +560,7 @@ function ViewsPanel({
         if (!c.signal.aborted) setError(String(e));
       });
     return () => c.abort();
-  }, [store, saving]);
+  }, [store, saving, views]);
   const run = (task: () => Promise<void>) => {
     setBusy(true);
     setError('');
@@ -589,10 +572,11 @@ function ViewsPanel({
     <div>
       <label className="stack-field">
         View name
-        <input autoFocus maxLength={100} value={name} onChange={(e) => setName(e.target.value)} />
+        <Input autoFocus maxLength={100} value={name} onChange={(e) => setName(e.target.value)} />
       </label>
       <div className="dialog-actions">
-        <button
+        <Button
+          variant="outline"
           disabled={busy || !name.trim()}
           onClick={() =>
             run(async () => {
@@ -605,9 +589,9 @@ function ViewsPanel({
           }
         >
           Rename current view
-        </button>
-        <button
-          className="primary"
+        </Button>
+        <Button
+          variant="default"
           disabled={busy || !name.trim()}
           onClick={() =>
             run(async () => {
@@ -620,23 +604,20 @@ function ViewsPanel({
                 name: name.trim(),
                 revision: 0,
               };
-              await new LocalStorageViewAdapter(localStorage).save(
-                state,
-                null,
-                new AbortController().signal,
-              );
+              await views.save(state, null, new AbortController().signal);
               close();
               await onSwitchView(state.viewId);
             })
           }
         >
           Save as new view
-        </button>
+        </Button>
       </div>
       <h3>Your views</h3>
       <div className="view-list">
-        {views.map((view) => (
-          <button
+        {savedViews.map((view) => (
+          <Button
+            variant="outline"
             disabled={busy || view.viewId === store.view!.getSnapshot().viewId}
             key={view.viewId}
             onClick={() =>
@@ -646,13 +627,13 @@ function ViewsPanel({
               })
             }
           >
-            {view.name}
+            {view?.name}
             {view.viewId === store.view!.getSnapshot().viewId ? ' · current' : ' →'}
-          </button>
+          </Button>
         ))}
       </div>
       <p className="settings-note">
-        Each view saves its layout, query, formats, frozen panes and calculations in this browser.
+        Each view saves its layout, query, formats, frozen panes and calculations.
       </p>
       {error && <p role="alert">{error}</p>}
     </div>

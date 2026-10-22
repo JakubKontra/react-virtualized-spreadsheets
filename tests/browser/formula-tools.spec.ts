@@ -40,8 +40,8 @@ test('transposes only internal formulas, preserves skipped targets and undoes th
   const data = await copy(page);
   await cell(page, 'E4').click();
   await pasteIntoDialog(page, data);
-  await page.getByLabel('Formulas only', { exact: true }).check();
-  await page.getByLabel('Transpose rows and columns').check();
+  await page.getByRole('radio', { name: 'Formulas only', exact: true }).check();
+  await page.getByRole('checkbox', { name: 'Transpose rows and columns' }).check();
   await expect(page.locator('.paste-preview')).toHaveText('2 rows × 1 columns · starting at E4');
   await page.getByRole('button', { name: 'Apply paste', exact: true }).click();
   await expect(page.getByRole('dialog')).toHaveCount(0);
@@ -61,12 +61,12 @@ test('pastes computed values, literal external text and persists the text throug
   const data = await copy(page);
   await cell(page, 'H2').click();
   await pasteIntoDialog(page, data);
-  await page.getByLabel('Values only', { exact: true }).check();
+  await page.getByRole('radio', { name: 'Values only', exact: true }).check();
   await page.getByRole('button', { name: 'Apply paste', exact: true }).click();
   await expect(bar(page)).toHaveValue('120');
   await cell(page, 'A1').click();
   await pasteIntoDialog(page, { text: '=1+1' });
-  await page.getByLabel('Values only', { exact: true }).check();
+  await page.getByRole('radio', { name: 'Values only', exact: true }).check();
   await page.getByRole('button', { name: 'Apply paste', exact: true }).click();
   await expect(cell(page, 'A1')).toHaveText('=1+1');
   await expect(bar(page)).toHaveValue("'=1+1");
@@ -77,12 +77,15 @@ test('pastes computed values, literal external text and persists the text throug
 test('retains rejected clipboard data and applies no partial writes', async ({ page }) => {
   await cell(page, 'A1').click();
   await pasteIntoDialog(page, { text: 'changed\tinvalid-date' });
-  await page.getByLabel('Values only', { exact: true }).check();
+  await page.getByRole('radio', { name: 'Values only', exact: true }).check();
   await page.getByRole('button', { name: 'Apply paste', exact: true }).click();
   await expect(page.getByRole('dialog').getByRole('alert')).toContainText('date');
   await expect(page.getByLabel('Copied cells')).toHaveValue('changed\tinvalid-date');
   await expect(cell(page, 'A1')).toHaveText('ORD-0000001');
-  await expect(page.getByRole('button', { name: 'Undo', exact: true })).toBeDisabled();
+  // Modal dialogs hide the workbook from the accessibility tree until dismissed.
+  await expect(
+    page.getByRole('button', { name: 'Undo', exact: true, includeHidden: true }),
+  ).toBeDisabled();
 });
 test('cycles F4 anchors in both editors and shows paired brackets and useful diagnostics', async ({
   page,

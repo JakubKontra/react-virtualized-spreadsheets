@@ -7,6 +7,7 @@
     "@sheet/react": "workspace:*",
     "@sheet/transport": "workspace:*",
     "react": "^19.3.1",
-    "react-dom": "^19.3.1"
+    "react-dom": "^19.3.1",
+    "@sheet/ui": "workspace:*"
   }
 }

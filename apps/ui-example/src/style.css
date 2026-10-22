@@ -1,0 +1,27 @@
+@import 'tailwindcss';
+@import '@sheet/ui/styles.css';
+body {
+  margin: 0;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  color: #171717;
+}
+.example {
+  max-width: 1100px;
+  margin: 32px auto;
+  padding: 0 16px;
+  display: grid;
+  gap: 20px;
+}
+h1 {
+  font-size: 24px;
+  font-weight: 600;
+}
+.workshop-theme {
+  --background: #fffbeb;
+  --popover: #fff7d6;
+  --muted: #fef3c7;
+  --border: #fde68a;
+  --primary: #78350f;
+  --primary-foreground: #fff;
+  --selection: #fde68a;
+}

@@ -12,6 +12,12 @@ export default defineConfig({
   },
   webServer: [
     {
+      command: 'pnpm dev:ui-example',
+      url: 'http://127.0.0.1:5174',
+      reuseExistingServer: !process.env.CI,
+      timeout: 30000,
+    },
+    {
       command: 'pnpm dev:server',
       url: 'http://127.0.0.1:4317/api/meta',
       reuseExistingServer: !process.env.CI,

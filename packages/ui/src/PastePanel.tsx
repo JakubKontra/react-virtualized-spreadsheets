@@ -1,3 +1,7 @@
+import { Button } from './components/button';
+import { Textarea } from './components/textarea';
+import { RadioGroup, RadioGroupItem } from './components/radio-group';
+import { Checkbox } from './components/checkbox';
 import { useMemo, useRef, useState } from 'react';
 import {
   CLIPBOARD_MIME,
@@ -31,7 +35,7 @@ export function PastePanel({ store, close }: { store: SpreadsheetStore; close: (
       <p>Paste a copied range below with Ctrl/⌘ V, then choose how to insert it.</p>
       <label className="paste-capture">
         Copied cells
-        <textarea
+        <Textarea
           autoFocus
           readOnly
           value={clipboard?.text ?? ''}
@@ -48,8 +52,13 @@ export function PastePanel({ store, close }: { store: SpreadsheetStore; close: (
           }}
         />
       </label>
-      <fieldset className="paste-modes" disabled={busy}>
-        <legend>Paste mode</legend>
+      <RadioGroup
+        className="paste-modes"
+        aria-label="Paste mode"
+        disabled={busy}
+        value={mode}
+        onValueChange={(value) => setMode(value as typeof mode)}
+      >
         {(
           [
             ['all', 'Original contents'],
@@ -58,23 +67,17 @@ export function PastePanel({ store, close }: { store: SpreadsheetStore; close: (
           ] as const
         ).map(([value, label]) => (
           <label key={value}>
-            <input
-              type="radio"
-              name="paste-mode"
-              value={value}
-              checked={mode === value}
-              onChange={() => setMode(value)}
-            />
+            <RadioGroupItem value={value} aria-label={label} />
             {label}
           </label>
         ))}
-      </fieldset>
+      </RadioGroup>
       <label className="paste-transpose">
-        <input
-          type="checkbox"
+        <Checkbox
+          aria-label="Transpose rows and columns"
           checked={transpose}
           disabled={busy}
-          onChange={(e) => setTranspose(e.target.checked)}
+          onCheckedChange={setTranspose}
         />
         Transpose rows and columns
       </label>
@@ -93,11 +96,11 @@ export function PastePanel({ store, close }: { store: SpreadsheetStore; close: (
       {tooLarge && <p role="alert">Paste at most 10,000 cells.</p>}
       {error && <p role="alert">{error}</p>}
       <div className="dialog-actions">
-        <button onClick={close} disabled={busy}>
+        <Button variant="outline" onClick={close} disabled={busy}>
           Cancel
-        </button>
-        <button
-          className="primary"
+        </Button>
+        <Button
+          variant="default"
           disabled={!clipboard || !!tooLarge || busy}
           onClick={async () => {
             if (!clipboard) return;
@@ -120,7 +123,7 @@ export function PastePanel({ store, close }: { store: SpreadsheetStore; close: (
           }}
         >
           {busy ? 'Pasting…' : 'Apply paste'}
-        </button>
+        </Button>
       </div>
     </>
   );

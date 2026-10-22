@@ -1,0 +1,12 @@
+{
+  "name": "@sheet/ui-example",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@sheet/core": "workspace:*",
+    "@sheet/transport": "workspace:*",
+    "@sheet/ui": "workspace:*",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  }
+}

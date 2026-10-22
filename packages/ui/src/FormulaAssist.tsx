@@ -1,3 +1,4 @@
+import { useSheetPortal } from './context';
 import { useLayoutEffect, useRef, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import type { useSpreadsheet } from '@sheet/react';
@@ -17,6 +18,7 @@ export function FormulaAssist({
   anchorRef: RefObject<HTMLInputElement | null>;
   scrollRef: RefObject<HTMLDivElement | null>;
 }) {
+  const portal = useSheetPortal();
   const popupRef = useRef<HTMLDivElement>(null);
   const latest = useRef(sheet);
   const reposition = useRef<(() => void) | null>(null);
@@ -123,9 +125,10 @@ export function FormulaAssist({
       viewport?.removeEventListener('resize', schedule);
       viewport?.removeEventListener('scroll', schedule);
     };
-  }, [anchorRef, scrollRef]);
+  }, [anchorRef, scrollRef, portal]);
 
   const { formula } = sheet;
+  if (!portal) return null;
   return createPortal(
     <div
       id={id}
@@ -189,6 +192,6 @@ export function FormulaAssist({
         Type a function, or click and drag cells after an operator to insert a reference.
       </small>
     </div>,
-    document.body,
+    portal,
   );
 }
