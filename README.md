@@ -1,6 +1,17 @@
-# Ledger · React spreadsheets
+# react-virtualized-spreadsheets
 
 A headless TypeScript spreadsheet with two-axis virtualization, a small formula engine, and interchangeable local-worker / server data sources. The optional `@sheet/ui` package adds a reusable shadcn/ui renderer; the sales workbook demonstrates its integration.
+
+## Documentation
+
+Run `pnpm dev:docs` and open **http://127.0.0.1:3000** for the Docusaurus documentation, live examples, use cases, API reference, roadmap and contribution guide. The examples work without the demo API.
+
+- [Get started](docs/getting-started/overview.md) · [Installation](docs/getting-started/installation.md)
+- [Roadmap](docs/roadmap.md) · [Contributing](CONTRIBUTING.md)
+- `pnpm build:docs` builds static output; `pnpm serve:docs` previews it with local search.
+- `pnpm test:docs` builds and runs documentation browser checks. Set `DOCS_BASE_URL=/spreadsheet/` to check subpath hosting.
+
+Documentation lives in `docs/`; site configuration lives in `apps/docs`. Set `DOCS_URL`, `DOCS_BASE_URL`, and optionally `DOCS_REPOSITORY_URL` / `DOCS_REPOSITORY_BRANCH` before building for a host. No deployment is performed by these commands.
 
 ## Run
 

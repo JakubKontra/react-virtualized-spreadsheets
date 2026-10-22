@@ -19,7 +19,12 @@
     "benchmark": "tsx benchmarks/engine.ts",
     "benchmark:browser": "playwright test --config playwright.benchmark.config.ts",
     "dev:ui-example": "vite --config apps/ui-example/vite.config.ts",
-    "test:ui-package": "pnpm -r --filter \"./packages/**\" build && node scripts/check-ui-package.mjs"
+    "test:ui-package": "pnpm -r --filter \"./packages/**\" build && node scripts/check-ui-package.mjs",
+    "prepare:docs": "pnpm -r --filter \"./packages/**\" build && vite build --config apps/docs-examples/vite.config.ts",
+    "dev:docs": "pnpm prepare:docs && pnpm --filter @sheet/docs start --no-open",
+    "build:docs": "pnpm prepare:docs && pnpm --filter @sheet/docs typecheck && pnpm --filter @sheet/docs build",
+    "serve:docs": "pnpm --filter @sheet/docs serve",
+    "test:docs": "pnpm build:docs && playwright test --config playwright.docs.config.ts"
   },
   "devDependencies": {
     "@playwright/test": "^1.56.1",

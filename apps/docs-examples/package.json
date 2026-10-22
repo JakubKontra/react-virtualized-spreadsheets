@@ -1,0 +1,13 @@
+{
+  "name": "@sheet/docs-examples",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@sheet/core": "workspace:*",
+    "@sheet/react": "workspace:*",
+    "@sheet/transport": "workspace:*",
+    "@sheet/ui": "workspace:*",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  }
+}

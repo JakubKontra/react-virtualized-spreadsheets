@@ -1,0 +1,21 @@
+# Quotation calculator
+
+import CodeBlock from '@theme/CodeBlock';
+import LiveExample from '@site/src/components/LiveExample';
+import source from '!!raw-loader!@site/../docs-examples/src/quotation.tsx';
+
+Change B1 from `12` to `20`. E1 becomes €1,700 and E4 becomes €4,416. Enter `10%` in D1 to apply a discount. Select a calculated cell to inspect its formula in the formula bar.
+
+<LiveExample name="quotation" title="Quotation with quantities discounts and totals" />
+
+These inputs live only in memory. Resetting or leaving the page discards edits; no API or account is required. On narrow screens, scroll inside the grid or open the example full screen.
+
+## Source
+
+This is the source used to build the live example. The shared `createExampleStore` and `useExample` helpers are included in the [first spreadsheet guide](../getting-started/first-sheet.mdx).
+
+<CodeBlock language="tsx" title="quotation.tsx">
+  {source}
+</CodeBlock>
+
+Continue with the [Quotation integration recipe](../use-cases/quotation.md).

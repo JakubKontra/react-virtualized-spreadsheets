@@ -19,5 +19,6 @@
       "@sheet/ui/*": ["packages/ui/src/*"]
     }
   },
-  "include": ["packages", "apps", "tests", "benchmarks", "*.config.ts"]
+  "include": ["packages", "apps", "tests", "benchmarks", "*.config.ts"],
+  "exclude": ["apps/docs"]
 }

@@ -1,0 +1,21 @@
+# Independent spreadsheets
+
+import CodeBlock from '@theme/CodeBlock';
+import LiveExample from '@site/src/components/LiveExample';
+import source from '!!raw-loader!@site/../docs-examples/src/independent.tsx';
+
+Edit A1 in Warehouse A. Its B1 recalculates while Warehouse B stays unchanged. Each instance has its own selection, history and menu scope. **Reset data** resets both instances.
+
+<LiveExample name="independent" title="Two independently editable spreadsheets" />
+
+These inputs live only in memory. Resetting or leaving the page discards edits; no API or account is required. On narrow screens, scroll inside the grid or open the example full screen.
+
+## Source
+
+This is the source used to build the live example. The shared `createExampleStore` and `useExample` helpers are included in the [first spreadsheet guide](../getting-started/first-sheet.mdx).
+
+<CodeBlock language="tsx" title="independent.tsx">
+  {source}
+</CodeBlock>
+
+Continue with the [Multiple-instance integration recipe](../use-cases/independent-sheets.md).

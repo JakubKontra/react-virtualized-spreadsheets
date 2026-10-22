@@ -1,0 +1,21 @@
+# Typed inventory
+
+import CodeBlock from '@theme/CodeBlock';
+import LiveExample from '@site/src/components/LiveExample';
+import source from '!!raw-loader!@site/../docs-examples/src/inventory.tsx';
+
+Click **Show low stock** to filter the complete 300-row dataset. Stock values below five are highlighted. Edit a quantity or choose a status from the list; the stock value recalculates. Use **Sort & filter** to explore other queries.
+
+<LiveExample name="inventory" title="Typed inventory with filters and conditional formatting" />
+
+These inputs live only in memory. Resetting or leaving the page discards edits; no API or account is required. On narrow screens, scroll inside the grid or open the example full screen.
+
+## Source
+
+This is the source used to build the live example. The shared `createExampleStore` and `useExample` helpers are included in the [first spreadsheet guide](../getting-started/first-sheet.mdx).
+
+<CodeBlock language="tsx" title="inventory.tsx">
+  {source}
+</CodeBlock>
+
+Continue with the [Inventory integration recipe](../use-cases/inventory.md).

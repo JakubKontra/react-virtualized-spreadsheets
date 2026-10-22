@@ -1,0 +1,63 @@
+# Your first spreadsheet
+
+This is the same component used by the live basic example. It creates a complete in-memory source, wraps it in a view and gives the resulting store to the UI renderer.
+
+import CodeBlock from '@theme/CodeBlock';
+import LiveExample from '@site/src/components/LiveExample';
+import basic from '!!raw-loader!@site/../docs-examples/src/basic.tsx';
+import factory from '!!raw-loader!@site/../docs-examples/src/create-example-store.ts';
+import lifecycle from '!!raw-loader!@site/../docs-examples/src/use-example.ts';
+
+<LiveExample name="basic" title="First spreadsheet: editing and formulas" />
+
+Double-click A1, enter `200` and press Enter. A3 becomes `280`; B1 becomes `242`. Use **Reset data** to restore the original inputs.
+
+## 1. Add the styles
+
+After [installing the packages](installation.md) and configuring Tailwind 4, import an application stylesheet:
+
+```css title="style.css"
+@import 'tailwindcss';
+@import '@sheet/ui/styles.css';
+```
+
+## 2. Connect a calculation engine
+
+Save the following as `create-example-store.ts`. The optional settings configure the view, while the source holds complete input data. This small example runs calculations on the main thread; use a [worker](../guides/data-sources.md#local-worker) for larger datasets.
+
+<CodeBlock language="ts" title="create-example-store.ts">
+  {factory}
+</CodeBlock>
+
+## 3. Own the store lifecycle
+
+Save this helper as `use-example.ts`. Each effect setup creates fresh stores, including in React Strict Mode. Cleanup disposes only those instances. The renderer itself does not dispose the store.
+
+<CodeBlock language="ts" title="use-example.ts">
+  {lifecycle}
+</CodeBlock>
+
+## 4. Render the spreadsheet
+
+<CodeBlock language="tsx" title="basic.tsx">
+  {basic}
+</CodeBlock>
+
+Mount the component in your app:
+
+```tsx title="main.tsx"
+import { StrictMode } from 'react';
+import { createRoot } from 'react-dom/client';
+import Basic from './basic';
+import './style.css';
+
+createRoot(document.getElementById('root')!).render(
+  <StrictMode>
+    <Basic />
+  </StrictMode>,
+);
+```
+
+The host HTML needs `<div id="root"></div>` and a module script pointing to `main.tsx`. The repository's `apps/docs-examples` contains that complete Vite app.
+
+Next, add [typed columns and filtering](../examples/inventory.mdx), or replace the renderer with [your own components](../guides/headless.md).

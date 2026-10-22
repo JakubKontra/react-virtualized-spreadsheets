@@ -1,0 +1,31 @@
+name: Bug report
+description: Report a reproducible spreadsheet or integration issue.
+title: 'bug: '
+body:
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Commit/package version, browser, OS, local or remote mode, and relevant dataset dimensions.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Exact steps, minimal input/formula or a small reproduction. Remove private data and credentials.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include errors, screenshots or a trace when useful.
+    validations:
+      required: true

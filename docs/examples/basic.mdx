@@ -1,0 +1,21 @@
+# Editing and formulas
+
+import CodeBlock from '@theme/CodeBlock';
+import LiveExample from '@site/src/components/LiveExample';
+import source from '!!raw-loader!@site/../docs-examples/src/basic.tsx';
+
+Double-click A1, enter `200` and press Enter. A3 changes to `280` and B1 to `242`. Try Undo, then type `=SUM(` in an empty cell to see function assistance.
+
+<LiveExample name="basic" title="Basic editing and formula example" />
+
+These inputs live only in memory. Resetting or leaving the page discards edits; no API or account is required. On narrow screens, scroll inside the grid or open the example full screen.
+
+## Source
+
+This is the source used to build the live example. The shared `createExampleStore` and `useExample` helpers are included in the [first spreadsheet guide](../getting-started/first-sheet.mdx).
+
+<CodeBlock language="tsx" title="basic.tsx">
+  {source}
+</CodeBlock>
+
+Continue with the [Build your first spreadsheet](../getting-started/first-sheet.mdx).

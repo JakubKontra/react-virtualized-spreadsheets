@@ -66,7 +66,7 @@ export function Inventory({ store }: { store: SpreadsheetStore }) {
 }
 ```
 
-Create and dispose the store in the host application. Changing the renderer or unmounting one spreadsheet does not dispose its store or persistence binding. In React Strict Mode, each effect setup must create fresh instances after the previous cleanup. See [the runnable example](../apps/ui-example/src/main.tsx).
+Create and dispose the store in the host application. Changing the renderer or unmounting one spreadsheet does not dispose its store or persistence binding. In React Strict Mode, each effect setup must create fresh instances after the previous cleanup. See [the runnable example](examples/independent.mdx) and `apps/ui-example/src/main.tsx`.
 
 ## Props and optional integrations
 

@@ -1,0 +1,23 @@
+name: Feature request
+description: Propose an improvement with a concrete use case.
+title: 'feat: '
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: User problem
+      description: What task is difficult today? Give a concrete example.
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Proposed behavior
+      description: Describe the smallest useful change and how success can be verified.
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Integration and alternatives
+      description: Local/server mode, headless/UI usage, relevant roadmap item and alternatives considered.

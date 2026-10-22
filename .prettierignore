@@ -4,3 +4,7 @@ pnpm-lock.yaml
 benchmark-results
 test-results
 playwright-report
+
+apps/docs/.docusaurus/
+apps/docs/build/
+apps/docs/static/examples/

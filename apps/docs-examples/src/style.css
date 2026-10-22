@@ -1,0 +1,95 @@
+@import 'tailwindcss';
+@import '@sheet/ui/styles.css';
+@source './**/*.{ts,tsx}';
+
+:root {
+  color-scheme: light;
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  background: #fff;
+  color: #27272a;
+}
+:root.dark {
+  color-scheme: dark;
+  background: #18181b;
+  color: #fafafa;
+}
+.dark {
+  --background: #18181b;
+  --foreground: #fafafa;
+  --primary: #fafafa;
+  --primary-foreground: #18181b;
+  --secondary: #27272a;
+  --secondary-foreground: #fafafa;
+  --muted: #27272a;
+  --muted-foreground: #a1a1aa;
+  --accent: #3f3f46;
+  --accent-foreground: #fafafa;
+  --popover: #27272a;
+  --popover-foreground: #fafafa;
+  --border: #3f3f46;
+  --input: #52525b;
+  --ring: #a3e635;
+  --destructive: #f87171;
+  --selection: #374225;
+}
+body {
+  margin: 0;
+}
+main {
+  padding: 16px;
+}
+.example-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  font-size: 12px;
+  margin-bottom: 16px;
+}
+.example-actions span {
+  opacity: 0.7;
+}
+.example-actions button {
+  flex-shrink: 0;
+  border: 1px solid #a1a1aa;
+  border-radius: 6px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+.example-actions button:hover {
+  background: #a1a1aa22;
+}
+.example-actions button:focus-visible {
+  outline: 2px solid #65a30d;
+  outline-offset: 3px;
+}
+.example-body {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+.example-body > button {
+  justify-self: start;
+}
+.second-sheet {
+  --primary: #4338ca;
+  --primary-foreground: white;
+  --ring: #818cf8;
+}
+@media (max-width: 480px) {
+  main {
+    padding: 8px;
+  }
+  .sheet-ui .sheet-toolbar {
+    padding-inline: 8px;
+  }
+  .sheet-ui .badge {
+    display: none;
+  }
+  .sheet-ui .formula-bar > input {
+    min-width: 0;
+  }
+  .sheet-ui .feature-toolbar {
+    flex-wrap: wrap;
+  }
+}
