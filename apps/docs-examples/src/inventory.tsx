@@ -1,11 +1,13 @@
 import { useState } from 'react';
+import { CanonicalCol, type SpreadsheetStore } from '@sheet/core';
 import { Spreadsheet, Button } from '@sheet/ui';
 import { createExampleStore } from './create-example-store';
 import { useExample } from './use-example';
 
 const labels = ['Part', 'Stock', 'Status', 'Unit price', 'Stock value'];
-const getColumnLabel = (column: number) => labels[column];
-function createStores() {
+const getColumnLabel = (column: CanonicalCol) => labels[column];
+const STOCK = CanonicalCol.of(1);
+function createStores(): readonly [SpreadsheetStore] {
   return [
     createExampleStore(
       {
@@ -18,7 +20,7 @@ function createStores() {
             row % 3 === 0 ? 'On order' : 'Available',
             12.5,
             `=B${row + 1}*D${row + 1}`,
-          ][col],
+          ][col] ?? null,
       },
       {
         frozen: { rows: 0, columns: 1 },
@@ -31,7 +33,7 @@ function createStores() {
         conditionalRules: [
           {
             id: 'low-stock',
-            col: 1,
+            col: STOCK,
             operator: 'lt',
             value: 5,
             color: '#92400e',
@@ -46,9 +48,10 @@ export default function Inventory() {
   const stores = useExample(createStores);
   const [lowStock, setLowStock] = useState(false);
   if (!stores) return <p>Preparing inventory…</p>;
+  const [store] = stores;
   return (
     <Spreadsheet
-      store={stores[0]}
+      store={store}
       title="Parts inventory"
       getColumnLabel={getColumnLabel}
       height={360}
@@ -58,17 +61,17 @@ export default function Inventory() {
           aria-pressed={lowStock}
           disabled={sheet.state.pending || sheet.state.querying}
           onClick={() => {
-            void sheet
-              .commitEdit()
+            sheet.edit
+              .commit()
               .then((committed) => {
                 if (!committed) return;
                 const next = !lowStock;
-                stores[0].configure({
-                  query: { filters: next ? [{ col: 1, operator: 'lt', value: 5 }] : [] },
+                store.configure({
+                  query: { filters: next ? [{ col: STOCK, operator: 'lt', value: 5 }] : [] },
                 });
                 setLowStock(next);
               })
-              .catch((error) => stores[0].setError(error));
+              .catch((error: unknown) => store.setError(error));
           }}
         >
           {lowStock ? 'Show all stock' : 'Show low stock'}

@@ -3,23 +3,38 @@ import { createLocalSource } from '../packages/transport/src/local';
 import {
   FormulaEngine,
   EngineSession,
-  parseAddress,
   copyRange,
   pasteCells,
   analyzeFormulaEditing,
   toggleFormulaReference,
   createViewState,
+  sameSpace,
   ViewCalculationRegistry,
   ViewController,
   mapViewFormula,
   type CellInput,
+  type Formula,
 } from '../packages/core/src';
-const address = (label: string) => parseAddress(label)!;
-function fixture(cells: Record<string, CellInput>, rows = 100000) {
+import {
+  A1,
+  c,
+  cell,
+  cells,
+  crange,
+  formula,
+  nth,
+  onlyValue,
+  r,
+  range,
+  required,
+  rev,
+} from './helpers';
+const address = A1;
+function fixture(inputs: Record<string, CellInput>, rows = 100000) {
   return new FormulaEngine({
     rows,
     columns: 20,
-    cells: Object.entries(cells).map(([label, input]) => ({ ...address(label), input })),
+    cells: Object.entries(inputs).map(([label, input]) => ({ ...address(label), input })),
   });
 }
 const value = (engine: FormulaEngine, label: string) => engine.value(address(label));
@@ -70,9 +85,9 @@ describe('additional formula functions', () => {
     expect(value(e, 'C4')).toBe(3);
     expect(value(e, 'C5')).toMatchObject({ error: '#DIV/0!' });
     expect(value(e, 'C6')).toMatchObject({ error: '#VALUE!' });
-    e.apply({ cells: [{ ...address('B3'), input: 9 }] });
+    e.apply(cells({ ...address('B3'), input: 9 }));
     expect(value(e, 'C1')).toBe(12);
-    e.apply({ cells: [{ ...address('A3'), input: 'no' }] });
+    e.apply(cells({ ...address('A3'), input: 'no' }));
     expect(value(e, 'C1')).toBe(3);
   });
   it('streams a complete million-row conditional aggregate with bounded formula state', () => {
@@ -80,7 +95,7 @@ describe('additional formula functions', () => {
       rows: 1000000,
       columns: 3,
       readInput: ({ row, col }) => (col === 0 ? row + 1 : col === 1 ? 2 : null),
-      cells: [{ row: 0, col: 2, input: '=SUMIF(A1:A1000000,">999990",B1:B1000000)' }],
+      cells: [cell(0, 2, '=SUMIF(A1:A1000000,">999990",B1:B1000000)')],
     });
     expect(value(e, 'C1')).toBe(20);
     expect(e.stats.cachedFormulas).toBe(1);
@@ -91,9 +106,9 @@ describe('additional formula functions', () => {
     const v = new ViewController(
       createViewState(
         createLocalSource({
-          metadata: { rows: 10, columns: 20, revision: 0 },
+          metadata: { rows: 10, columns: 20, revision: rev(0) },
           calculator: {
-            calculate: async (range) => e.block(range, 0),
+            calculate: async (block) => e.block(block, rev(0)),
             apply: async (mutation, revision) => new EngineSession(e).mutate(mutation, revision),
             dispose() {},
           },
@@ -102,19 +117,16 @@ describe('additional formula functions', () => {
       ),
     );
     v.replace({ ...v.getSnapshot(), cells: { '0:2': '=SUMIF(A1:A3,"yes",B1:B3)' } });
-    v.change({ type: 'move', axis: 'rows', start: 1, count: 1, before: 5 });
-    v.change({ type: 'move', axis: 'columns', start: 0, count: 1, before: 3 });
+    v.change({ type: 'move', axis: 'rows', start: r(1), count: 1, before: r(5) });
+    v.change({ type: 'move', axis: 'columns', start: c(0), count: 1, before: c(3) });
     const state = v.getSnapshot();
-    const displayed = mapViewFormula(state.cells['0:2'] as string, state, 'display');
+    const stored = formula(state.cells['0:2']);
+    const displayed = mapViewFormula(stored, state, 'display');
     const rebound = mapViewFormula(displayed, state, 'bind');
     const registry = new ViewCalculationRegistry(e);
-    const read = (formula: string) =>
-      registry.blocks(
-        { ...state, cells: { '0:2': formula } },
-        [{ start: { row: 0, col: 2 }, end: { row: 0, col: 2 } }],
-        0,
-      ).blocks[0].cells[0].value;
-    expect(read(state.cells['0:2'] as string)).toBe(9);
+    const read = (input: Formula) =>
+      onlyValue(registry.blocks({ ...state, cells: { '0:2': input } }, [crange(0, 2)], rev(0)));
+    expect(read(stored)).toBe(9);
     expect(read(rebound)).toBe(9);
   });
   it('evaluates IFERROR lazily and propagates argument and logic errors', () => {
@@ -177,39 +189,38 @@ describe('additional formula functions', () => {
   });
 });
 describe('special clipboard', () => {
+  const inputs: CellInput[][] = [
+    [1, '=A1+$A$1', null],
+    ["'001", '="=1+1"', true],
+  ];
+  const values: CellInput[][] = [
+    [1, 2, null],
+    ['001', '=1+1', true],
+  ];
   const copied = () =>
-    copyRange({ start: { row: 0, col: 0 }, end: { row: 1, col: 2 } }, ({ row, col }) => ({
-      input: [
-        [1, '=A1+$A$1', null],
-        ["'001", '="=1+1"', true],
-      ][row][col],
-      value: [
-        [1, 2, null],
-        ['001', '=1+1', true],
-      ][row][col],
+    copyRange(range(0, 0, 1, 2), ({ row, col }) => ({
+      input: inputs[row]?.[col] ?? null,
+      value: values[row]?.[col] ?? null,
       status: 'ready',
     }));
   it('transposes formulas from each original position and skips constants without filling holes', () => {
     const data = copied();
     expect(
-      pasteCells(data.tsv, { row: 3, col: 3 }, data, (a) => a, {
+      pasteCells(data.tsv, address('D4'), data, sameSpace, {
         mode: 'formulas',
         transpose: true,
       }),
-    ).toEqual([
-      { row: 4, col: 3, input: '=C5+$A$1' },
-      { row: 4, col: 4, input: '="=1+1"' },
-    ]);
+    ).toEqual([cell(4, 3, '=C5+$A$1'), cell(4, 4, '="=1+1"')]);
     expect(
-      pasteCells('1\t=A1\n3\t4', { row: 2, col: 2 }, null, (a) => a, {
+      pasteCells('1\t=A1\n3\t4', address('C3'), null, sameSpace, {
         mode: 'formulas',
         transpose: true,
       }),
-    ).toEqual([{ row: 3, col: 2, input: '=A1' }]);
+    ).toEqual([cell(3, 2, '=A1')]);
   });
   it('preserves types and literal text when pasting internal values, including empty text and apostrophes', () => {
     const data = copied();
-    const patches = pasteCells(data.tsv, { row: 3, col: 3 }, data, (a) => a, { mode: 'values' });
+    const patches = pasteCells(data.tsv, address('D4'), data, sameSpace, { mode: 'values' });
     const e = new FormulaEngine({ rows: 10, columns: 10, cells: patches });
     expect(patches.map((p) => e.value(p))).toEqual([1, 2, null, '001', '=1+1', true]);
     for (const literal of ['', "'quoted", '=1+1', 'TRUE', '001']) {
@@ -218,7 +229,10 @@ describe('special clipboard', () => {
         value: literal,
         status: 'ready',
       }));
-      const [patch] = pasteCells(copy.tsv, address('A1'), copy, (a) => a, { mode: 'values' });
+      const patch = nth(
+        pasteCells(copy.tsv, address('A1'), copy, sameSpace, { mode: 'values' }),
+        0,
+      );
       const engine = new FormulaEngine({ rows: 1, columns: 1, cells: [patch] });
       expect(engine.value(address('A1'))).toBe(literal);
       const recopy = copyRange({ start: address('A1'), end: address('A1') }, () => ({
@@ -226,18 +240,19 @@ describe('special clipboard', () => {
         value: engine.value(address('A1')),
         status: 'ready',
       }));
-      expect(pasteCells(recopy.tsv, address('A1'), recopy)[0].input).toBe(patch.input);
+      expect(pasteCells(recopy.tsv, address('A1'), recopy)[0]?.input).toBe(patch.input);
     }
   });
   it('never evaluates external value text and respects the internal token opt-out', () => {
     const data = copied();
-    const [patch] = pasteCells('=1+1', address('A1'), null, (a) => a, { mode: 'values' });
+    const patch = nth(pasteCells('=1+1', address('A1'), null, sameSpace, { mode: 'values' }), 0);
     expect(fixture({ A1: patch.input }).value(address('A1'))).toBe('=1+1');
     expect(
-      pasteCells(data.tsv, address('A1'), data, (a) => a, { useInternalFormulas: false })[1].input,
+      pasteCells(data.tsv, address('A1'), data, sameSpace, { useInternalFormulas: false })[1]
+        ?.input,
     ).toBe(2);
     expect(() =>
-      pasteCells('x\t'.repeat(10000), address('A1'), null, (a) => a, { mode: 'formulas' }),
+      pasteCells('x\t'.repeat(10000), address('A1'), null, sameSpace, { mode: 'formulas' }),
     ).toThrow('10,000');
   });
 });
@@ -246,7 +261,7 @@ describe('formula editing analysis', () => {
     let draft = '=A1';
     let caret = 3;
     for (const expected of ['=$A$1', '=A$1', '=$A1', '=A1']) {
-      const next = toggleFormulaReference(draft, caret)!;
+      const next = required(toggleFormulaReference(draft, caret));
       expect(next.value).toBe(expected);
       expect(next.start).toBe(expected.length);
       draft = next.value;
@@ -264,9 +279,11 @@ describe('formula editing analysis', () => {
     expect(analyzeFormulaEditing('=SUM((A1),2)', 6).bracketPair).toEqual([5, 8]);
     expect(analyzeFormulaEditing('="("&A1', 3).bracketPair).toBe(null);
     for (const draft of ['=SUM(', '=SUM(A1', '=1+', '="text', '=', '=SU'])
-      expect(analyzeFormulaEditing(draft, draft.length).diagnostics[0].severity).toBe('incomplete');
+      expect(analyzeFormulaEditing(draft, draft.length).diagnostics[0]?.severity).toBe(
+        'incomplete',
+      );
     for (const draft of ['=SUM(1))', '=1@2', '=BOGUS(1)', '=ROUND(1)'])
-      expect(analyzeFormulaEditing(draft, draft.length).diagnostics[0].severity).toBe('error');
+      expect(analyzeFormulaEditing(draft, draft.length).diagnostics[0]?.severity).toBe('error');
     expect(analyzeFormulaEditing('=SUMIF(A1:A3,">0")', 22).diagnostics).toEqual([]);
   });
 });

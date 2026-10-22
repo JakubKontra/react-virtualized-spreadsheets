@@ -1,12 +1,12 @@
+import type { CanonicalCol, CellInput, SpreadsheetStore } from '@sheet/core';
 import { Spreadsheet } from '@sheet/ui';
-import type { CellInput } from '@sheet/core';
 import { createExampleStore } from './create-example-store';
 import { useExample } from './use-example';
 
 const labels = ['Service', 'Quantity', 'Unit price', 'Discount', 'Line total'];
-const getColumnLabel = (column: number) => labels[column];
-function createStores() {
-  const rows: CellInput[][] = [
+const getColumnLabel = (column: CanonicalCol) => labels[column];
+function createStores(): readonly [SpreadsheetStore] {
+  const rows: readonly (readonly CellInput[])[] = [
     ['Design', 12, 85, 0, '=B1*C1*(1-D1)'],
     ['Development', 24, 110, 0.1, '=B2*C2*(1-D2)'],
     ['Review', 4, 85, 0, '=B3*C3*(1-D3)'],

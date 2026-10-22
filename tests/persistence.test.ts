@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+  SourceId,
   ViewController,
+  ViewId,
+  ViewRevision,
   type SheetViewState,
   type PersistedView,
   type ViewPersistenceAdapter,
@@ -10,25 +13,32 @@ import {
   LocalStorageViewAdapter,
   ViewPersistenceBinding,
 } from '../packages/transport/src/persistence';
+import { c, cc, cr, nth, r, signal } from './helpers';
+const mine = ViewId.unsafe('mine');
 const initial = (): SheetViewState => ({
   schemaVersion: 1,
-  viewId: 'mine',
-  sourceId: 'sales',
+  viewId: mine,
+  sourceId: SourceId.unsafe('sales'),
   sourceRows: 1000000,
   sourceColumns: 50,
-  revision: 0,
+  revision: ViewRevision.initial,
   rows: {
-    order: [{ start: 0, count: 1000000 }],
+    order: [{ start: cr(0), count: 1000000 }],
     hidden: [],
     sizes: {},
     owned: {},
     nextIndex: 1000000,
   },
-  columns: { order: [{ start: 0, count: 50 }], hidden: [], sizes: {}, owned: {}, nextIndex: 50 },
+  columns: {
+    order: [{ start: cc(0), count: 50 }],
+    hidden: [],
+    sizes: {},
+    owned: {},
+    nextIndex: 50,
+  },
   cells: {},
   columnFormulas: {},
 });
-const signal = () => new AbortController().signal;
 function storage() {
   const data = new Map<string, string>();
   return {
@@ -55,8 +65,8 @@ describe('view persistence', () => {
     await expect(
       adapter.save({ ...initial(), name: 'Changed' }, saved.version, signal()),
     ).rejects.toThrow('quota');
-    expect((await adapter.load('mine', signal()))?.version).toBe(saved.version);
-    expect((await adapter.list('sales', signal()))[0].name).toBe('Original');
+    expect((await adapter.load(mine, signal()))?.version).toBe(saved.version);
+    expect((await adapter.list(SourceId.unsafe('sales'), signal()))[0]?.name).toBe('Original');
     fail = false;
     await expect(
       adapter.save({ ...initial(), name: 'Changed' }, saved.version, signal()),
@@ -65,16 +75,16 @@ describe('view persistence', () => {
   it('roundtrips compact state and rejects stale versions and aborted requests', async () => {
     const memory = storage();
     const adapter = new LocalStorageViewAdapter(memory);
-    expect(await adapter.load('mine', signal())).toBe(null);
+    expect(await adapter.load(mine, signal())).toBe(null);
     const view = new ViewController(initial());
-    view.change({ type: 'insert', axis: 'rows', before: 10 });
-    view.change({ type: 'resize', axis: 'rows', start: 10, count: 1, size: 90 });
+    view.change({ type: 'insert', axis: 'rows', before: r(10) });
+    view.change({ type: 'resize', axis: 'rows', start: r(10), count: 1, size: 90 });
     const saved = await adapter.save(view.getSnapshot(), null, signal());
-    expect(await new LocalStorageViewAdapter(memory).load('mine', signal())).toEqual(saved);
+    expect(await new LocalStorageViewAdapter(memory).load(mine, signal())).toEqual(saved);
     await expect(adapter.save(view.getSnapshot(), null, signal())).rejects.toThrow('another tab');
     const controller = new AbortController();
     controller.abort();
-    await expect(adapter.load('mine', controller.signal)).rejects.toThrow();
+    await expect(adapter.load(mine, controller.signal)).rejects.toThrow();
     await expect(
       adapter.save(view.getSnapshot(), saved.version, controller.signal),
     ).rejects.toThrow();
@@ -100,18 +110,20 @@ describe('view persistence', () => {
     };
     const view = new ViewController(initial());
     const binding = new ViewPersistenceBinding(view, adapter, null, 10000);
-    view.change({ type: 'hide', axis: 'rows', start: 5, count: 10 });
+    view.change({ type: 'hide', axis: 'rows', start: r(5), count: 10 });
     const flight = binding.flush();
     expect(requests).toHaveLength(1);
-    view.change({ type: 'move', axis: 'columns', start: 0, count: 1, before: 3 });
+    view.change({ type: 'move', axis: 'columns', start: c(0), count: 1, before: c(3) });
     expect(binding.flush()).toBe(flight);
     expect(requests).toHaveLength(1);
-    requests[0].resolve({ state: requests[0].state, version: 'v1' });
+    const first = nth(requests, 0);
+    first.resolve({ state: first.state, version: 'v1' });
     await Promise.resolve();
     expect(requests).toHaveLength(2);
-    expect(requests[1].expected).toBe('v1');
-    expect(requests[1].state.revision).toBe(2);
-    requests[1].resolve({ state: requests[1].state, version: 'v2' });
+    const second = nth(requests, 1);
+    expect(second.expected).toBe('v1');
+    expect(second.state.revision).toBe(2);
+    second.resolve({ state: second.state, version: 'v2' });
     await flight;
     expect(binding.getSnapshot().status).toBe('saved');
     binding.dispose();
@@ -131,7 +143,7 @@ describe('view persistence', () => {
       },
     };
     const binding = new ViewPersistenceBinding(view, adapter, null, 10000);
-    view.change({ type: 'hide', axis: 'columns', start: 0, count: 1 });
+    view.change({ type: 'hide', axis: 'columns', start: c(0), count: 1 });
     await binding.flush();
     expect(binding.getSnapshot()).toEqual({ status: 'error', error: 'Offline' });
     expect(view.columns.count).toBe(49);
@@ -139,7 +151,7 @@ describe('view persistence', () => {
     await binding.flush();
     expect(binding.getSnapshot().status).toBe('saved');
     binding.dispose();
-    expect(aborted!.aborted).toBe(true);
+    expect(aborted?.aborted).toBe(true);
   });
   it('rejects malformed persisted documents instead of silently resetting them', async () => {
     const memory = storage();
@@ -148,26 +160,28 @@ describe('view persistence', () => {
       'ledger:view:mine',
       JSON.stringify({ state: { ...initial(), schemaVersion: 999 }, version: 'v1' }),
     );
-    await expect(adapter.load('mine', signal())).rejects.toThrow('Invalid');
+    await expect(adapter.load(mine, signal())).rejects.toThrow('Invalid');
     memory.setItem(
       'ledger:view:mine',
       JSON.stringify({ state: { ...initial(), viewId: 'someone-else' }, version: 'v1' }),
     );
-    await expect(adapter.load('mine', signal())).rejects.toThrow('Invalid');
+    await expect(adapter.load(mine, signal())).rejects.toThrow('Invalid');
   });
   it('uses the versioned HTTP contract and surfaces conflicts', async () => {
     const requests: [string, RequestInit | undefined][] = [];
     let status = 200;
-    const adapter = new HttpViewAdapter('/api/views', (async (url, init) => {
+    const request: typeof fetch = async (url, init) => {
       requests.push([String(url), init]);
       return new Response(JSON.stringify({ state: initial(), version: 'v1' }), { status });
-    }) as typeof fetch);
+    };
+    const adapter = new HttpViewAdapter('/api/views', request);
     expect((await adapter.save(initial(), null, signal())).version).toBe('v1');
-    expect(requests[0][0]).toBe('/api/views/mine');
-    expect(JSON.parse(requests[0][1]!.body as string).expectedVersion).toBe(null);
+    const [url, init] = nth(requests, 0);
+    expect(url).toBe('/api/views/mine');
+    expect(JSON.parse(String(init?.body))).toMatchObject({ expectedVersion: null });
     status = 409;
     await expect(adapter.save(initial(), 'v1', signal())).rejects.toThrow('changed on the server');
     status = 404;
-    expect(await adapter.load('mine', signal())).toBe(null);
+    expect(await adapter.load(mine, signal())).toBe(null);
   });
 });

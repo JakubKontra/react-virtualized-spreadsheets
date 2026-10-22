@@ -141,6 +141,9 @@ importers:
       '@sheet/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@sheet/transport':
+        specifier: workspace:*
+        version: link:../../packages/transport
 
   apps/ui-example:
     dependencies:

@@ -1,18 +1,17 @@
+import type { SpreadsheetStore } from '@sheet/core';
 import { Spreadsheet } from '@sheet/ui';
-import { createExampleStore } from './create-example-store';
+import { cell, createExampleStore } from './create-example-store';
 import { useExample } from './use-example';
 
-function createStores() {
-  return [10, 25].map((quantity) =>
-    createExampleStore({
-      rows: 20,
-      columns: 4,
-      cells: [
-        { row: 0, col: 0, input: quantity },
-        { row: 0, col: 1, input: '=A1*2' },
-      ],
-    }),
-  );
+function createWarehouse(quantity: number): SpreadsheetStore {
+  return createExampleStore({
+    rows: 20,
+    columns: 4,
+    cells: [cell(0, 0, quantity), cell(0, 1, '=A1*2')],
+  });
+}
+function createStores(): readonly [SpreadsheetStore, SpreadsheetStore] {
+  return [createWarehouse(10), createWarehouse(25)];
 }
 export default function Independent() {
   const stores = useExample(createStores);

@@ -1,14 +1,12 @@
+import { isError, isFormula, type CellInput, type CellPatch, type CellSnapshot } from './cell';
+import { Address, CellRange, sameSpace, type LogicalAddress } from './coords';
+import { SheetError } from './errors';
 import { shiftFormula } from './formula';
-import {
-  normalizeRange,
-  type Address,
-  type CellInput,
-  type CellPatch,
-  type CellRange,
-  type CellSnapshot,
-} from './types';
+import { LIMITS } from './limits';
+
 export const CLIPBOARD_MIME = 'application/x-ledger-clipboard';
 
+/** Interprets pasted text without column-specific rules. */
 export function parseInput(text: string): CellInput {
   if (text === '') return null;
   if (text.startsWith('=')) return text;
@@ -17,7 +15,7 @@ export function parseInput(text: string): CellInput {
     return Number(text);
   return text;
 }
-export function encodeTSV(rows: CellInput[][]) {
+export function encodeTSV(rows: readonly (readonly CellInput[])[]): string {
   return rows
     .map((row) =>
       row
@@ -57,38 +55,41 @@ export function decodeTSV(text: string): string[][] {
   }
   return rows;
 }
+
+/** An internal copy, kept so pastes can rebase formulas and preserve types. */
 export interface ClipboardData {
-  origin: Address;
-  positions?: Address[][];
-  inputs: CellInput[][];
+  /** Logical position of the top-left copied cell. */
+  readonly origin: LogicalAddress;
+  /** Logical position of each copied cell; positions can be discontiguous in a view. */
+  readonly positions?: readonly (readonly LogicalAddress[])[];
+  readonly inputs: readonly (readonly CellInput[])[];
   /** Computed values captured at copy time, before TSV loses type information. */
-  values?: CellInput[][];
-  tsv: string;
+  readonly values?: readonly (readonly CellInput[])[];
+  readonly tsv: string;
 }
 export function copyRange(
   range: CellRange,
   read: (address: Address) => CellSnapshot,
-  position: (address: Address) => Address = (address) => address,
+  position: (address: Address) => LogicalAddress = sameSpace,
 ): ClipboardData {
-  const { start, end } = normalizeRange(range);
+  const { start, end } = CellRange.normalize(range);
+  if (CellRange.size({ start, end }) > LIMITS.maxEditCells)
+    throw new SheetError('LIMIT_EXCEEDED', 'Clipboard limit is 10,000 cells');
   const inputs: CellInput[][] = [];
   const values: CellInput[][] = [];
-  const positions: Address[][] = [];
-  if ((end.row - start.row + 1) * (end.col - start.col + 1) > 10000)
-    throw new Error('Clipboard limit is 10,000 cells');
+  const positions: LogicalAddress[][] = [];
   for (let row = start.row; row <= end.row; row++) {
     const inputRow: CellInput[] = [];
     const valueRow: CellInput[] = [];
-    const positionRow: Address[] = [];
+    const positionRow: LogicalAddress[] = [];
     for (let col = start.col; col <= end.col; col++) {
-      const cell = read({ row, col });
+      const address = Address.unsafe(row, col);
+      const cell = read(address);
       if (cell.status === 'loading' || cell.status === 'calculating')
-        throw new Error('Wait for the selected cells to load before copying');
+        throw new SheetError('BUSY', 'Wait for the selected cells to load before copying');
       inputRow.push(cell.input);
-      positionRow.push(position({ row, col }));
-      valueRow.push(
-        typeof cell.value === 'object' && cell.value !== null ? cell.value.error : cell.value,
-      );
+      positionRow.push(position(address));
+      valueRow.push(isError(cell.value) ? cell.value.error : cell.value);
     }
     inputs.push(inputRow);
     values.push(valueRow);
@@ -96,21 +97,27 @@ export function copyRange(
   }
   return { origin: position(start), positions, inputs, values, tsv: encodeTSV(values) };
 }
+
+export const PASTE_MODES = ['all', 'values', 'formulas'] as const;
+export type PasteMode = (typeof PASTE_MODES)[number];
+export const isPasteMode = (value: unknown): value is PasteMode =>
+  PASTE_MODES.some((mode) => mode === value);
+
 export interface PasteOptions {
-  mode?: 'all' | 'values' | 'formulas';
-  transpose?: boolean;
+  readonly mode?: PasteMode | undefined;
+  readonly transpose?: boolean | undefined;
   /** Only enable for a verified internal clipboard token (default true for imperative callers). */
-  useInternalFormulas?: boolean;
+  readonly useInternalFormulas?: boolean | undefined;
 }
 export function pasteCells(
   text: string,
   target: Address,
   internal?: ClipboardData | null,
-  position: (address: Address) => Address = (address) => address,
+  position: (address: Address) => LogicalAddress = sameSpace,
   options: PasteOptions = {},
 ): CellPatch[] {
   const mode = options.mode ?? 'all';
-  if (!['all', 'values', 'formulas'].includes(mode)) throw new Error('Unknown paste mode');
+  if (!isPasteMode(mode)) throw new SheetError('INVALID_INPUT', 'Unknown paste mode');
   const matching =
     options.useInternalFormulas !== false && internal?.tsv === text ? internal : null;
   const external = () => decodeTSV(text).map((row) => row.map(parseInput));
@@ -119,31 +126,27 @@ export function pasteCells(
       ? (matching.values ?? external())
       : matching.inputs
     : external();
-  if (rows.reduce((sum, row) => sum + row.length, 0) > 10000)
-    throw new Error('Clipboard limit is 10,000 cells');
+  if (rows.reduce((sum, row) => sum + row.length, 0) > LIMITS.maxEditCells)
+    throw new SheetError('LIMIT_EXCEEDED', 'Clipboard limit is 10,000 cells');
   const patches: CellPatch[] = [];
-  for (let r = 0; r < rows.length; r++)
-    for (let c = 0; c < rows[r].length; c++) {
-      const input = rows[r][c];
-      if (mode === 'formulas' && !(typeof input === 'string' && input.startsWith('='))) continue;
-      const address = {
-        row: target.row + (options.transpose ? c : r),
-        col: target.col + (options.transpose ? r : c),
-      };
+  rows.forEach((cells, r) =>
+    cells.forEach((input, c) => {
+      if (mode === 'formulas' && !isFormula(input)) return;
+      const address = Address.offset(target, options.transpose ? c : r, options.transpose ? r : c);
       const destination = position(address);
-      const origin = matching?.positions?.[r]?.[c] ?? {
-        row: (matching?.origin.row ?? 0) + r,
-        col: (matching?.origin.col ?? 0) + c,
-      };
+      const origin =
+        matching?.positions?.[r]?.[c] ??
+        Address.unsafe<'logical'>((matching?.origin.row ?? 0) + r, (matching?.origin.col ?? 0) + c);
       patches.push({
         ...address,
         input:
           mode === 'values' && typeof input === 'string'
             ? "'" + input
-            : matching && typeof input === 'string'
+            : matching && isFormula(input)
               ? shiftFormula(input, destination.row - origin.row, destination.col - origin.col)
               : input,
       });
-    }
+    }),
+  );
   return patches;
 }

@@ -1,11 +1,21 @@
 import { useEffect, useState } from 'react';
 import {
+  Address,
+  CanonicalCol,
+  CellRange,
+  ColIndex,
   columnLabel,
   createSpreadsheet,
   createViewState,
+  errorMessage,
+  invariant,
+  Revision,
+  ViewId,
+  type SheetViewState,
   type SpreadsheetStore,
+  type ViewCapableSource,
 } from '@sheet/core';
-import { Spreadsheet, Button } from '@sheet/ui';
+import { Spreadsheet, Button, type SpreadsheetController } from '@sheet/ui';
 import {
   createHttpSource,
   createLocalSource,
@@ -15,8 +25,20 @@ import {
 } from '@sheet/transport';
 import { SALES_COLUMNS, SALES_FORMULAS } from '../../shared/sales';
 
+type Mode = 'local' | 'remote';
+type ActiveViews = Readonly<Record<Mode, ViewId>>;
+/** A store and the binding that autosaves its view; created and disposed together. */
+interface LoadedSheet {
+  readonly store: SpreadsheetStore;
+  readonly persistence: ViewPersistenceBinding;
+}
+
+const DEFAULT_VIEW_NAME = 'October sales';
+/** Canonical column of units sold, summed by a new calculation. */
+const UNITS = CanonicalCol.of(3);
 const widths = [154, 130, 204, 94, 128, 112, 150, 138];
-const columnWidth = (col: number) => widths[col] ?? 132;
+const columnWidth = (col: CanonicalCol) => widths[col] ?? 132;
+const getColumnLabel = (col: CanonicalCol) => SALES_COLUMNS[col] ?? 'Calculation';
 const viewAdapter = new LocalStorageViewAdapter(localStorage);
 declare global {
   interface Window {
@@ -24,119 +46,146 @@ declare global {
   }
 }
 
+function initialViews(): ActiveViews {
+  return {
+    local: ViewId.unsafe(localStorage.getItem('ledger:active:local') ?? 'sales-local-v1'),
+    remote: ViewId.unsafe(localStorage.getItem('ledger:active:remote') ?? 'sales-remote-v1'),
+  };
+}
+
+async function openSource(mode: Mode, signal: AbortSignal): Promise<ViewCapableSource> {
+  return mode === 'local'
+    ? createLocalSource({
+        metadata: { rows: 100000, columns: 50, revision: Revision.initial },
+        columnFormulas: SALES_FORMULAS,
+        calculator: new WorkerCalculationAdapter(
+          new Worker(new URL('./calculation.worker.ts', import.meta.url), { type: 'module' }),
+        ),
+      })
+    : createHttpSource({ baseUrl: '/api', signal });
+}
+
+function defaultView(source: ViewCapableSource, mode: Mode, viewId: ViewId): SheetViewState {
+  return {
+    ...createViewState(source, {
+      viewId,
+      sourceId: `sales-${mode}`,
+      ownedColumns: Array.from({ length: 44 }, (_, i) => i + 6),
+      labels: Object.fromEntries(SALES_COLUMNS.map((name, index) => [index, name])),
+    }),
+    name: DEFAULT_VIEW_NAME,
+    columnOptions: {
+      1: { kind: 'date' },
+      3: { kind: 'number', decimals: 0 },
+      4: { kind: 'currency', currency: 'EUR' },
+      5: { kind: 'percent' },
+      6: { kind: 'currency', currency: 'EUR' },
+      7: { kind: 'currency', currency: 'EUR' },
+    },
+  };
+}
+
+async function loadSheet(mode: Mode, viewId: ViewId, signal: AbortSignal): Promise<LoadedSheet> {
+  const source = await openSource(mode, signal);
+  try {
+    const saved = await viewAdapter.load(viewId, signal);
+    signal.throwIfAborted();
+    const store = createSpreadsheet({
+      source,
+      view: { state: saved?.state ?? defaultView(source, mode, viewId) },
+    });
+    const view = store.view;
+    invariant(view, 'a store created with a view exposes it');
+    const persistence = new ViewPersistenceBinding(view, viewAdapter, saved?.version ?? null);
+    // Older saved views have no name; naming them goes through autosave.
+    if (saved && !saved.state.name) view.replace({ ...saved.state, name: DEFAULT_VIEW_NAME });
+    return { store, persistence };
+  } catch (error) {
+    source.dispose();
+    throw error;
+  }
+}
+
+/** Writes a pending cell edit before the store is replaced. */
+async function commitPending(store: SpreadsheetStore): Promise<void> {
+  if (store.getSnapshot().editing) await store.commitDraft();
+}
+
+/** Inserts a calculated column after the active one and starts a formula summing units. */
+async function addCalculation(store: SpreadsheetStore, sheet: SpreadsheetController) {
+  if (!(await sheet.edit.commit())) return;
+  const view = store.view;
+  if (!view) return;
+  // Start next to the current column so the new calculation is immediately visible.
+  const col = ColIndex.offset(sheet.state.active.col, 1);
+  store.changeView({ type: 'insert', axis: 'columns', before: col, label: 'Calculation' });
+  const units = view.columns.logicalIndex(UNITS);
+  invariant(units !== undefined, 'the units column belongs to the source');
+  const letter = columnLabel(units);
+  const address = Address.of(0, col);
+  sheet.navigation.select(address);
+  await store.ensureRange(CellRange.of(address));
+  sheet.edit.start({
+    initial: `=SUM($${letter}$1:$${letter}$${view.rows.logicalCount})`,
+    address,
+  });
+}
+
 export function App() {
-  const [activeViews, setActiveViews] = useState(() => ({
-    local: localStorage.getItem('ledger:active:local') ?? 'sales-local-v1',
-    remote: localStorage.getItem('ledger:active:remote') ?? 'sales-remote-v1',
-  }));
-  const [mode, setMode] = useState<'local' | 'remote'>('local');
-  const [store, setStore] = useState<SpreadsheetStore | null>(null);
+  const [activeViews, setActiveViews] = useState<ActiveViews>(initialViews);
+  const [mode, setMode] = useState<Mode>('local');
+  const [sheet, setSheet] = useState<LoadedSheet | null>(null);
   const [error, setError] = useState('');
-  const [saving, setSaving] = useState<ViewPersistenceBinding | null>(null);
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
-    let active = true;
-    let instance: SpreadsheetStore | undefined;
-    let binding: ViewPersistenceBinding | undefined;
+    let loaded: LoadedSheet | undefined;
     const controller = new AbortController();
-    setStore(null);
-    setSaving(null);
+    setSheet(null);
     setError('');
-    async function load() {
-      const source =
-        mode === 'local'
-          ? createLocalSource({
-              metadata: { rows: 100000, columns: 50, revision: 0 },
-              columnFormulas: SALES_FORMULAS,
-              calculator: new WorkerCalculationAdapter(
-                new Worker(new URL('./calculation.worker.ts', import.meta.url), { type: 'module' }),
-              ),
-            })
-          : await createHttpSource({ baseUrl: '/api', signal: controller.signal });
-      if (!active) {
-        source.dispose();
-        return;
-      }
-      const adapter = viewAdapter;
-      const viewId = activeViews[mode];
-      let saved;
-      try {
-        saved = await adapter.load(viewId, controller.signal);
-      } catch (error) {
-        source.dispose();
-        throw error;
-      }
-      if (!active) {
-        source.dispose();
-        return;
-      }
-      const viewState =
-        saved?.state ??
-        createViewState(source, {
-          viewId,
-          sourceId: `sales-${mode}`,
-          ownedColumns: Array.from({ length: 44 }, (_, i) => i + 6),
-          labels: Object.fromEntries(SALES_COLUMNS.map((name, index) => [index, name])),
-        });
-      if (!saved) {
-        viewState.name = 'October sales';
-        viewState.columnOptions = {
-          1: { kind: 'date' },
-          3: { kind: 'number', decimals: 0 },
-          4: { kind: 'currency', currency: 'EUR' },
-          5: { kind: 'percent' },
-          6: { kind: 'currency', currency: 'EUR' },
-          7: { kind: 'currency', currency: 'EUR' },
-        };
-      }
-      instance = createSpreadsheet({ source, viewState });
-      binding = new ViewPersistenceBinding(instance.view!, adapter, saved?.version ?? null);
-      if (saved && !viewState.name) instance.view!.replace({ ...viewState, name: 'October sales' });
-      setSaving(binding);
-      setStore(instance);
-      if (import.meta.env.DEV) window.__sheet = instance;
-    }
-    void load().catch((error) => {
-      if (active) setError(String(error));
-    });
+    loadSheet(mode, activeViews[mode], controller.signal)
+      .then((result) => {
+        if (controller.signal.aborted) {
+          result.persistence.dispose();
+          result.store.dispose();
+          return;
+        }
+        loaded = result;
+        setSheet(result);
+        if (import.meta.env.DEV) window.__sheet = result.store;
+      })
+      .catch((cause: unknown) => {
+        if (!controller.signal.aborted) setError(errorMessage(cause));
+      });
     return () => {
-      active = false;
       controller.abort();
-      binding?.dispose();
-      instance?.dispose();
-      if (window.__sheet === instance) delete window.__sheet;
+      loaded?.persistence.dispose();
+      loaded?.store.dispose();
+      if (loaded && window.__sheet === loaded.store) delete window.__sheet;
     };
   }, [mode, attempt, activeViews]);
-  async function switchMode(next: 'local' | 'remote') {
+  async function switchMode(next: Mode) {
     try {
-      const state = store?.getSnapshot();
-      if (state?.editing) {
-        if (String(store!.readCell(state.editing).input ?? '') === (state.draft ?? ''))
-          store!.cancelEdit();
-        else
-          await store!.edit([
-            { ...state.editing, input: store!.parseInput(state.draft ?? '', state.editing) },
-          ]);
+      if (sheet) {
+        await commitPending(sheet.store);
+        await sheet.persistence.flush();
       }
-      await saving?.flush();
-      if (saving?.getSnapshot().status !== 'error') setMode(next);
-    } catch (error) {
-      store?.setError(error);
+      if (sheet?.persistence.getSnapshot().status !== 'error') setMode(next);
+    } catch (cause) {
+      sheet?.store.setError(cause);
     }
   }
-  async function switchView(id: string) {
+  async function switchView(id: ViewId) {
     try {
-      const state = store?.getSnapshot();
-      if (state?.editing)
-        await store!.edit([
-          { ...state.editing, input: store!.parseInput(state.draft ?? '', state.editing) },
-        ]);
-      await saving?.flush();
-      if (saving?.getSnapshot().status === 'error') throw new Error(saving.getSnapshot().error!);
+      if (sheet) {
+        await commitPending(sheet.store);
+        await sheet.persistence.flush();
+        const status = sheet.persistence.getSnapshot();
+        if (status.status === 'error') throw new Error(status.error);
+      }
       localStorage.setItem(`ledger:active:${mode}`, id);
       setActiveViews((previous) => ({ ...previous, [mode]: id }));
-    } catch (error) {
-      store?.setError(error);
+    } catch (cause) {
+      sheet?.store.setError(cause);
     }
   }
   return (
@@ -209,40 +258,26 @@ export function App() {
             {mode === 'local' ? '100,000 rows' : '1,000,000 rows'} <b>×</b> 50 columns
           </span>
         </section>
-        {store ? (
+        {sheet ? (
           <Spreadsheet
             key={mode + attempt + activeViews[mode]}
-            store={store}
-            persistence={saving!}
+            store={sheet.store}
+            persistence={sheet.persistence}
             views={viewAdapter}
             height="clamp(320px, calc(100vh - 470px), 660px)"
-            getColumnLabel={(col) => SALES_COLUMNS[col] ?? 'Calculation'}
+            getColumnLabel={getColumnLabel}
             columnWidth={columnWidth}
-            renderToolbar={(sheet) => (
+            renderToolbar={(controller) => (
               <Button
                 variant="outline"
                 aria-label="Add calculation"
                 className="calculation-button"
-                disabled={!store.rows || sheet.state.querying}
-                onClick={() =>
-                  void (async () => {
-                    if (!(await sheet.commitEdit())) return;
-                    // Start next to the current column so the new calculation is immediately visible.
-                    const col = sheet.state.active.col + 1;
-                    store.changeView({
-                      type: 'insert',
-                      axis: 'columns',
-                      before: col,
-                      label: 'Calculation',
-                    });
-                    const units = store.view!.columns.logicalIndex(3);
-                    const formula = `=SUM($${columnLabel(units)}$1:$${columnLabel(units)}$${store.view!.rows.logicalCount})`;
-                    const address = { row: 0, col };
-                    sheet.select(address);
-                    await store.ensureRange({ start: address, end: address });
-                    sheet.startEdit(formula, address);
-                  })().catch((error) => store.setError(error))
-                }
+                disabled={!sheet.store.rows || controller.state.querying}
+                onClick={() => {
+                  addCalculation(sheet.store, controller).catch((cause: unknown) =>
+                    sheet.store.setError(cause),
+                  );
+                }}
               >
                 ƒx <span>Add calculation</span>
               </Button>

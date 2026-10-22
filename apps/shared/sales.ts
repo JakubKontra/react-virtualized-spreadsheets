@@ -1,5 +1,8 @@
-import { FormulaEngine, type Address, type CellInput } from '@sheet/core';
-export const SALES_FORMULAS: Record<number, string> = { 6: '=D1*E1*(1-F1)', 7: '=G1*0.24' };
+import { FormulaEngine, type Address, type CellInput, type Formula } from '@sheet/core';
+export const SALES_FORMULAS: Readonly<Record<number, Formula>> = {
+  6: '=D1*E1*(1-F1)',
+  7: '=G1*0.24',
+};
 export const SALES_COLUMNS = [
   'Order',
   'Date',
@@ -25,7 +28,7 @@ export function saleInput({ row, col }: Address): CellInput {
     case 1:
       return `2026-10-${String((row % 22) + 1).padStart(2, '0')}`;
     case 2:
-      return customers[row % customers.length];
+      return customers[row % customers.length] ?? null;
     case 3:
       return (row % 9) + 1;
     case 4:

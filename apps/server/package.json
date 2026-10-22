@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "@sheet/core": "workspace:*"
+    "@sheet/core": "workspace:*",
+    "@sheet/transport": "workspace:*"
   }
 }
