@@ -16,7 +16,7 @@ The total uses `=SUM(E1:E3)`. These formulas refer to a fixed range: adding a ne
 
 ## Application integration
 
-Use `renderToolbar` for application actions such as **Save draft**. Await `sheet.commitEdit()` first and stop if it returns false; then persist through your application's own service. The live example intentionally resets when the page reloads.
+Use `renderToolbar` for application actions such as **Save draft**. Await `sheet.edit.commit()` first and stop if it returns false; then persist through your application's own service. The live example intentionally resets when the page reloads.
 
 Treat saved view state, product catalog data and approved quotation records as separate application concerns. `ViewPersistenceBinding` saves view definitions; it is not an invoicing backend. Use server-side validation for an approved financial document.
 

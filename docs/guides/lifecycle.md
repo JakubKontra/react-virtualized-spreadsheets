@@ -39,9 +39,9 @@ Here `createSpreadsheet` and `SpreadsheetStore` come from `@sheet/core`; `create
 
 ## Operations and failure states
 
-Await `edit`, `paste`, `fill`, `clearSelection`, `undo` and `redo`. Catch rejections and show them in your application's error surface, or call `store.setError(error)` to use the renderer's error display. Formula evaluation errors are cell values with an error code; they are distinct from rejected mutations or network failures.
+Await `edit`, `paste`, `fill`, `clearSelection`, `undo` and `redo`. Catch rejections and show them in your application's error surface, or call `store.setError(error)` to use the renderer's error display. Rejections are `SheetError`s; branch on `error.code` (for example `REVISION_CONFLICT` or `DISCONNECTED`) rather than on the message. Formula evaluation errors are cell values with an error code; they are distinct from rejected mutations or network failures. See [errors](../api/adapters.md#errors).
 
-`useSpreadsheet().commitEdit()` returns `Promise<boolean>`. A rejected mutation returns `false`, retains the draft and exposes the error. A disconnected remote source rejects writes. Do not clear a draft or report success until an operation succeeds.
+`useSpreadsheet().edit.commit()` returns `Promise<boolean>`. A rejected mutation returns `false`, retains the draft and exposes the error. Without React, `store.commitDraft()` rejects instead. A disconnected remote source rejects writes. Do not clear a draft or report success until an operation succeeds.
 
 ## Persistence cleanup
 

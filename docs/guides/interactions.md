@@ -39,16 +39,21 @@ store.configure({ frozen: { rows: 1, columns: 2 } });
 
 ## Sort, filter and search
 
-Use **Sort & filter** for up to three sort keys, eight filters and full-dataset text search. Queries run in the calculation layer, not just on visible cells. Settings use stable canonical column indexes:
+Use **Sort & filter** for up to three sort keys, eight filters and full-dataset text search. Queries run in the calculation layer, not just on visible cells. Settings use stable canonical column indexes, branded as `CanonicalCol`:
 
 ```ts
+import { CanonicalCol } from '@sheet/core';
+
+const stock = CanonicalCol.of(1);
 store.configure({
   query: {
-    sorts: [{ col: 1, direction: 'asc' }],
-    filters: [{ col: 1, operator: 'lt', value: 5 }],
+    sorts: [{ col: stock, direction: 'asc' }],
+    filters: [{ col: stock, operator: 'lt', value: 5 }],
   },
 });
 ```
+
+`ColumnFilter` is a union: `empty` and `notEmpty` take no `value`; the other operators require one. `withFilterOperator(filter, operator)` switches operators and keeps the value when the new operator takes one. `FILTER_OPERATORS` and `SORT_DIRECTIONS` list the allowed values.
 
 Clear a query with `store.configure({ query: {} })`. Filtering changes which rows are displayed; A1 references retain their logical view meaning. Selection summaries aggregate the selected result, including unloaded cells. See [formulas and filtered rows](../formulas.md).
 
@@ -65,7 +70,7 @@ store.configure({
   conditionalRules: [
     {
       id: 'low-stock',
-      col: 1,
+      col: stock,
       operator: 'lt',
       value: 5,
       color: '#92400e',
@@ -75,4 +80,4 @@ store.configure({
 });
 ```
 
-Configuration replaces each supplied settings field. Merge the existing `columnOptions` map when changing only one column. Settings require a store created with `viewState`; the [inventory example](../examples/inventory.mdx) shows the complete setup.
+`columnOptions` is keyed by canonical column number. `ColumnOptions` is a union discriminated by `kind`: `decimals` applies to `number`, `percent` and `currency`, `currency` only to `currency`, and `options` only to `select`. `withColumnKind(option, kind)` switches kinds while keeping compatible settings; `CELL_KINDS` lists the kinds. Configuration replaces each supplied settings field. Merge the existing `columnOptions` map when changing only one column. Settings require a store created with a `view`; the [inventory example](../examples/inventory.mdx) shows the complete setup.

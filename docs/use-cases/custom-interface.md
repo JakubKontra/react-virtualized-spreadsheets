@@ -2,7 +2,7 @@
 
 Use the headless packages when a spreadsheet should match an existing application shell, proprietary component library or specialized workflow.
 
-Start from the [headless renderer guide](../guides/headless.md). Keep `@sheet/core`, `@sheet/react` and your chosen transport. Supply DOM, styling, headers, toolbars, error messages and editing overlays yourself.
+Start from the [headless renderer guide](../guides/headless.mdx). Keep `@sheet/core`, `@sheet/react` and your chosen transport. Supply DOM, styling, headers, toolbars, error messages and editing overlays yourself.
 
 The hook gives you geometry and interaction handlers. Your components still decide how selected cells look, where formula assistance appears and how menus return focus. Keep virtual cells small and subscribe through `useCell`; create menus or rich controls only where needed.
 

@@ -58,15 +58,15 @@ Create an application-owned worker. Data in this worker must be complete: `readI
 
 ```ts
 // calculation.worker.ts
-import { FormulaEngine, EngineSession } from '@sheet/core';
+import { Address, FormulaEngine, EngineSession } from '@sheet/core';
 import { installCalculationWorker } from '@sheet/transport';
 
 const engine = new FormulaEngine({
   rows: 100_000,
   columns: 50,
   cells: [
-    { row: 0, col: 0, input: 120 },
-    { row: 0, col: 1, input: '=A1*1.21' },
+    { ...Address.of(0, 0), input: 120 },
+    { ...Address.of(0, 1), input: '=A1*1.21' },
   ],
   // Alternatively: readInput: ({ row, col }) => yourCompleteData[row][col]
 });
@@ -76,12 +76,12 @@ installCalculationWorker(new EngineSession(engine), self);
 Create the store once for the mounted workbook and call `dispose()` on unmount. For React Strict Mode, create a fresh store inside each effect setup; do not reuse an instance disposed by effect cleanup. The demo shows this lifecycle, including an aborted remote connection.
 
 ```ts
-import { createSpreadsheet } from '@sheet/core';
+import { createSpreadsheet, Revision } from '@sheet/core';
 import { createLocalSource, WorkerCalculationAdapter } from '@sheet/transport';
 
 const store = createSpreadsheet({
   source: createLocalSource({
-    metadata: { rows: 100_000, columns: 50, revision: 0 },
+    metadata: { rows: 100_000, columns: 50, revision: Revision.initial },
     calculator: new WorkerCalculationAdapter(
       new Worker(new URL('./calculation.worker.ts', import.meta.url), { type: 'module' }),
     ),
@@ -90,7 +90,7 @@ const store = createSpreadsheet({
 // Later: store.dispose(); terminates the worker and subscriptions.
 ```
 
-Cells accept `string | number | boolean | null`. Strings beginning with `=` are formulas. A leading apostrophe escapes literal text: input `'=1+1` displays `=1+1`, and `''quoted` displays `'quoted`. The editor and persistence retain the escape character; calculated values do not. Coordinates are zero-based. `columnFormulas` are templates anchored to row zero; relative references shift for each row. Per-cell inputs override a template in local mode. Clearing a generated local cell stores an explicit null override.
+Cells accept `string | number | boolean | null`. Strings beginning with `=` are formulas. A leading apostrophe escapes literal text: input `'=1+1` displays `=1+1`, and `''quoted` displays `'quoted`. The editor and persistence retain the escape character; calculated values do not. Coordinates are zero-based and branded per axis and coordinate space: build addresses with `Address.of(row, col)` (see [coordinates](docs/guides/coordinates.md)). `columnFormulas` are templates anchored to row zero; relative references shift for each row. Per-cell inputs override a template in local mode. Clearing a generated local cell stores an explicit null override.
 
 ## Render with shadcn/ui
 
@@ -98,27 +98,27 @@ Import `tailwindcss` and `@sheet/ui/styles.css` in your application CSS, then re
 
 ## Render with your own components
 
-The hook returns geometry and interaction props. You supply the DOM and CSS. A minimal viewport:
+The hook returns a grouped controller (`layout`, `edit`, `navigation`, `props`, `gestures`, `formula`, `summary`) with geometry and interaction props. You supply the DOM and CSS. A minimal viewport, typechecked as [`apps/docs-examples/src/headless.tsx`](apps/docs-examples/src/headless.tsx) and explained in the [headless guide](docs/guides/headless.mdx):
 
 ```tsx
 import { useRef } from 'react';
+import { isError, type Address, type SpreadsheetStore } from '@sheet/core';
 import { useCell, useSpreadsheet } from '@sheet/react';
-import { isError } from '@sheet/core';
-import type { SpreadsheetStore } from '@sheet/core';
 
-function Value({ store, row, col }: { store: SpreadsheetStore; row: number; col: number }) {
-  const cell = useCell(store, row, col);
+function Value({ store, address }: { store: SpreadsheetStore; address: Address }) {
+  const cell = useCell(store, address);
   if (cell.status === 'loading') return <>…</>;
   return <>{isError(cell.value) ? cell.value.error : String(cell.value ?? '')}</>;
 }
 
-function Grid({ store }: { store: SpreadsheetStore }) {
+export function Grid({ store }: { store: SpreadsheetStore }) {
   const scrollRef = useRef<HTMLDivElement>(null);
-  const grid = useSpreadsheet({ store, scrollRef, rowHeaderWidth: 0, columnHeaderHeight: 0 });
+  const sheet = useSpreadsheet({ store, scrollRef, rowHeaderWidth: 0, columnHeaderHeight: 0 });
+  const { layout, props, state } = sheet;
   return (
-    <div ref={scrollRef} {...grid.gridProps} style={{ height: 500, overflow: 'auto' }}>
-      <div style={{ position: 'relative', height: grid.totalHeight, width: grid.totalWidth }}>
-        {grid.virtualRows.map((row) => (
+    <div ref={scrollRef} {...props.grid} style={{ height: 400, overflow: 'auto' }}>
+      <div style={{ position: 'relative', height: layout.totalHeight, width: layout.totalWidth }}>
+        {layout.virtualRows.map((row) => (
           <div
             key={row.key}
             role="row"
@@ -126,25 +126,35 @@ function Grid({ store }: { store: SpreadsheetStore }) {
               position: 'absolute',
               top: row.start,
               height: row.size,
-              width: grid.totalWidth,
+              width: layout.totalWidth,
             }}
           >
-            {grid.virtualColumns.map((col) => (
-              <div
-                key={col.key}
-                {...grid.getCellProps({ row: row.index, col: col.index })}
-                style={{ position: 'absolute', left: col.start, width: col.size, height: row.size }}
-              >
-                <Value store={store} row={row.index} col={col.index} />
-              </div>
-            ))}
+            {layout.virtualColumns.map((col) => {
+              const address: Address = { row: row.index, col: col.index };
+              return (
+                <div
+                  key={col.key}
+                  {...props.cell(address)}
+                  style={{
+                    position: 'absolute',
+                    left: col.start,
+                    width: col.size,
+                    height: row.size,
+                    border: '1px solid #d4d4d8',
+                    padding: 4,
+                  }}
+                >
+                  <Value store={store} address={address} />
+                </div>
+              );
+            })}
           </div>
         ))}
-        {grid.state.editing && (
+        {state.editing && (
           <input
-            {...grid.editorProps}
+            {...props.editor}
             autoFocus
-            style={{ position: 'absolute', ...grid.cellRect(grid.state.editing) }}
+            style={{ position: 'absolute', ...layout.cellRect(state.editing) }}
           />
         )}
       </div>
@@ -155,16 +165,16 @@ function Grid({ store }: { store: SpreadsheetStore }) {
 
 The editor is outside virtualized rows, so manual scrolling does not discard its draft or focus. Keep `columnWidth` callbacks stable. `useCell` subscribes to one cell, independently of selection and viewport subscriptions. The headless packages do not require a stylesheet, component kit, router, or React context provider.
 
-The optional UI renderer adds sticky headers, drag previews, header actions, a shared formula-bar draft, focus styling, save/error/connection states and keyboard hints. `grid.gestures` exposes unstyled header, drag and resize props plus preview geometry. See [view state and persistence](docs/views.md) for the full contract. The returned grid and cell props include ARIA row/column counts, indexes, active descendant, selection and read-only state. Screen-reader behavior across browser combinations has not been manually audited.
+The optional UI renderer adds sticky headers, drag previews, header actions, a shared formula-bar draft, focus styling, save/error/connection states and keyboard hints. `sheet.gestures` exposes unstyled header, drag and resize props plus preview geometry. See [view state and persistence](docs/views.md) for the full contract. The returned grid and cell props include ARIA row/column counts, indexes, active descendant, selection and read-only state. Screen-reader behavior across browser combinations has not been manually audited.
 
 ## Store and source contract
 
-- `store.select(address, extend?)`, `beginEdit()`, `cancelEdit()` control interaction state.
-- `store.edit(patches)` is one undoable transaction. `paste(text, options?)`, `clearSelection()`, `undo()` and `redo()` are asynchronous. Catch rejected operations and surface `state.error`.
+- `store.select(address, extend?)`, `beginEdit()`, `cancelEdit()` control interaction state. `store.commitDraft(text?, address?)` parses and writes a draft.
+- `store.edit(patches)` is one undoable transaction. `paste(text, options?)`, `clearSelection()`, `undo()` and `redo()` are asynchronous. Catch rejected operations (`SheetError` with a `code`) and surface `state.error`.
 - `PasteOptions` accepts `mode: 'all' | 'values' | 'formulas'` (default `all`), `transpose` (default false), and `useInternalFormulas` (default true). The legacy boolean second argument remains supported. Browser integrations must enable internal data only when the clipboard's `CLIPBOARD_MIME` token matches `store.getClipboardToken()`; pass false for external text. Values mode uses typed results captured at copy time; formula mode skips non-formulas. Native Ctrl/⌘ V retains its existing behavior.
-- `store.setColumnFormula(col, formula | null)` updates a template. In remote mode, `useSpreadsheet().commitEdit()` converts a row-specific formula back to its first-row template.
+- `store.setColumnFormula(col, formula | null)` updates a template. In remote mode without a view, `store.commitDraft()` (and the hook's `edit.commit()`) converts a row-specific formula back to its first-row template.
 - `ensureRange(range)` preloads bounded blocks; `readCell(address)` returns a stable snapshot. Missing cells are `loading`, never zero. Existing results become `calculating` when invalidated.
-- `source.rowId()` and `columnId()` identify stable rows and columns. Configure `viewState` to enable structural operations. `store.changeView()` moves, inserts, hides, restores, removes custom items or resizes, with undo. `store.view` exposes the compact mapping; `logicalAddress()` / `labelAddress()` include hidden items.
+- `source.rowId()` and `columnId()` identify stable rows and columns. Pass `view: { state, onChange? }` to `createSpreadsheet` to enable structural operations; the source must provide the `views` capability. `store.changeView()` moves, inserts, hides, restores, removes custom items or resizes, with undo. `store.view` exposes the compact mapping; `logicalAddress()` / `labelAddress()` include hidden items.
 - The default cache holds at most 48 blocks of 64 × 8 cells (24,576 snapshots). Each source response contains authoritative computed values and a monotonic revision. Late responses cannot overwrite newer data.
 - Editing/paste/delete is capped at 10,000 cells and history at 100 transactions. Selection is unrestricted; copying requires its cells to be loaded, and oversized copies show an error. The cache also bounds the size of ranges preloaded in one operation.
 - A disconnected server cannot accept edits. Rejected writes retain the user's draft and undo history. Live source changes are never added to local undo history.
@@ -181,18 +191,18 @@ const store = createSpreadsheet({ source });
 
 Implement the following endpoints, or implement the `DataSource` interface directly for your existing API:
 
-| Endpoint                         | Contract                                                                                                             |
-| -------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `GET /meta`                      | `{ rows, columns, revision, columnFormulas, editableColumns }`                                                       |
-| `GET /block?r0=…&r1=…&c0=…&c1=…` | Inclusive range; `{ range, revision, cells: [{ row, col, input, value, status }] }`                                  |
-| `POST /mutate`                   | `{ revision, mutation: { columns: [{ col, formula }] } }`; returns current metadata; stale revision returns HTTP 409 |
-| `GET /events`                    | SSE `data:` contains current metadata. Reconnection also refetches `/meta`.                                          |
+| Endpoint                         | Contract                                                                                                                              |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /meta`                      | `{ rows, columns, revision, columnFormulas, editableColumns }`                                                                        |
+| `GET /block?r0=…&r1=…&c0=…&c1=…` | Inclusive range; `{ range, revision, cells: [{ row, col, input, value, status }] }`                                                   |
+| `POST /mutate`                   | `{ revision, mutation: { kind: 'columns', columns: [{ col, formula }] } }`; returns current metadata; stale revision returns HTTP 409 |
+| `GET /events`                    | SSE `data:` contains current metadata. Reconnection also refetches `/meta`.                                                           |
 
 The same-origin adapter uses browser fetch and EventSource. Factories can be injected for application-specific authentication. Production authorization, database persistence, transport limits and multi-user conflict handling belong in the host application.
 
 For sales, keep row IDs and order stable for a sheet session. Formula evaluation belongs on the server with access to the complete dataset. If the backend only reads database pages, provide database-backed aggregation or a complete calculation service; never sum just the browser cache. The demo runs the shared JavaScript engine in a Node worker thread and generates the full synthetic dataset on demand. Its main HTTP thread remains available during calculations, but requests to the calculation worker are serialized.
 
-Without `viewState`, mutations use the original source revision contract. With `viewState`, calculations use an isolated overlay and never call source mutation endpoints. `POST /view-blocks` receives `{ view, ranges }` in canonical coordinates and returns `{ blocks, revision }` for the source revision. Persist view definitions separately using a versioned adapter; conflicts retain local changes. The demo exposes `GET/PUT /api/views/:viewId` backed by an in-memory map as a reference. See [the integration contract](docs/views.md).
+Without a `view`, mutations use the original source revision contract. With a `view`, calculations use an isolated overlay and never call source mutation endpoints. `POST /view-blocks` receives `{ view, ranges }` in canonical coordinates and returns `{ blocks, revision }` for the source revision. Persist view definitions separately using a versioned adapter; conflicts retain local changes. The demo exposes `GET/PUT /api/views/:viewId` backed by an in-memory map as a reference. See [the integration contract](docs/views.md).
 
 ## Formula semantics and performance
 
