@@ -3,6 +3,7 @@ import {
   type PersistedView,
   type SheetViewState,
   type ViewController,
+  type ViewSummary,
   type ViewPersistenceAdapter,
 } from '@sheet/core';
 
@@ -11,6 +12,12 @@ export class LocalStorageViewAdapter implements ViewPersistenceAdapter {
     private storage: Pick<Storage, 'getItem' | 'setItem'>,
     private prefix = 'ledger:view:',
   ) {}
+  async list(sourceId: string, signal: AbortSignal): Promise<ViewSummary[]> {
+    signal.throwIfAborted();
+    return JSON.parse(
+      this.storage.getItem(this.prefix + 'catalog:' + sourceId) ?? '[]',
+    ) as ViewSummary[];
+  }
   async load(viewId: string, signal: AbortSignal): Promise<PersistedView | null> {
     signal.throwIfAborted();
     return this.read(viewId);
@@ -39,12 +46,27 @@ export class LocalStorageViewAdapter implements ViewPersistenceAdapter {
         state,
         version: globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`,
       };
-      this.storage.setItem(this.prefix + state.viewId, JSON.stringify(result));
+      const key = this.prefix + 'catalog:' + state.sourceId;
+      const previousCatalog = this.storage.getItem(key) ?? '[]';
+      const catalog = JSON.parse(previousCatalog) as ViewSummary[];
+      this.storage.setItem(
+        key,
+        JSON.stringify([
+          ...catalog.filter((v) => v.viewId !== state.viewId),
+          { viewId: state.viewId, sourceId: state.sourceId, name: state.name ?? state.viewId },
+        ]),
+      );
+      try {
+        this.storage.setItem(this.prefix + state.viewId, JSON.stringify(result));
+      } catch (error) {
+        this.storage.setItem(key, previousCatalog);
+        throw error;
+      }
       return result;
     };
     // Web Locks make compare-and-set atomic across cooperating browser tabs.
     if (typeof navigator !== 'undefined' && navigator.locks)
-      return navigator.locks.request(this.prefix + state.viewId, { signal }, write);
+      return navigator.locks.request(this.prefix + 'catalog', { signal }, write);
     return write();
   }
 }
@@ -53,6 +75,14 @@ export class HttpViewAdapter implements ViewPersistenceAdapter {
     private baseUrl: string,
     private request: typeof fetch = globalThis.fetch,
   ) {}
+  async list(sourceId: string, signal: AbortSignal): Promise<ViewSummary[]> {
+    const response = await this.request(
+      `${this.baseUrl.replace(/\/$/, '')}?sourceId=${encodeURIComponent(sourceId)}`,
+      { signal },
+    );
+    if (!response.ok) throw new Error('Could not list views');
+    return response.json();
+  }
   private url(viewId: string) {
     return `${this.baseUrl.replace(/\/$/, '')}/${encodeURIComponent(viewId)}`;
   }

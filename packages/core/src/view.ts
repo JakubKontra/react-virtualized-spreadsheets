@@ -1,4 +1,5 @@
 import type { CellInput, DataSource } from './types';
+import { hasQuery, validateSettings, type ViewSettings } from './features';
 
 export type Axis = 'rows' | 'columns';
 export interface AxisSpan {
@@ -13,7 +14,7 @@ export interface ViewAxisState {
   owned: Record<number, { id: string; label?: string }>;
   nextIndex: number;
 }
-export interface SheetViewState {
+export interface SheetViewState extends ViewSettings {
   schemaVersion: 1;
   viewId: string;
   sourceId: string;
@@ -30,7 +31,13 @@ export interface PersistedView {
   state: SheetViewState;
   version: string | null;
 }
+export interface ViewSummary {
+  viewId: string;
+  name: string;
+  sourceId: string;
+}
 export interface ViewPersistenceAdapter {
+  list?(sourceId: string, signal: AbortSignal): Promise<ViewSummary[]>;
   load(viewId: string, signal: AbortSignal): Promise<PersistedView | null>;
   save(
     state: SheetViewState,
@@ -86,9 +93,19 @@ export class ViewAxis {
   readonly visible: AxisSpan[];
   readonly count: number;
   readonly logicalCount: number;
-  constructor(readonly state: ViewAxisState) {
+  private inverse?: Int32Array;
+  constructor(
+    readonly state: ViewAxisState,
+    readonly projection?: Uint32Array,
+  ) {
     this.visible = subtractSpans(state.order, state.hidden);
-    this.count = this.visible.reduce((sum, span) => sum + span.count, 0);
+    this.count = projection?.length ?? this.visible.reduce((sum, span) => sum + span.count, 0);
+    if (projection) {
+      this.inverse = new Int32Array(state.nextIndex).fill(-1);
+      projection.forEach((canonical, index) => {
+        this.inverse![canonical] = index;
+      });
+    }
     this.logicalCount = state.order.reduce((sum, span) => sum + span.count, 0);
   }
   private at(spans: AxisSpan[], index: number) {
@@ -109,13 +126,18 @@ export class ViewAxis {
     return -1;
   }
   canonicalAt(index: number) {
+    if (this.projection) {
+      if (!Number.isInteger(index) || index < 0 || index >= this.count)
+        throw new Error('Axis position is outside the view');
+      return this.projection[index];
+    }
     return this.at(this.visible, index);
   }
   canonicalAtLogical(index: number) {
     return this.at(this.state.order, index);
   }
   visibleIndex(canonical: number) {
-    return this.index(this.visible, canonical);
+    return this.inverse ? (this.inverse[canonical] ?? -1) : this.index(this.visible, canonical);
   }
   logicalIndex(canonical: number) {
     return this.index(this.state.order, canonical);
@@ -130,6 +152,13 @@ export class ViewAxis {
     return this.state.sizes[this.canonicalAt(index)] ?? fallback;
   }
   slice(start: number, count: number) {
+    if (this.projection)
+      return compactSpans(
+        Array.from(this.projection.subarray(start, start + count), (value) => ({
+          start: value,
+          count: 1,
+        })),
+      );
     return sliceSpans(this.visible, start, count);
   }
   logicalSlice(start: number, count: number) {
@@ -248,6 +277,7 @@ export function validateViewState(value: unknown): asserts value is SheetViewSta
       )
         throw new Error('Invalid custom identity');
   }
+  validateSettings(state, state.columns.nextIndex);
   if (!state.cells || !state.columnFormulas) throw new Error('Invalid view inputs');
   for (const [key, value] of Object.entries(state.cells)) {
     const parts = key.split(':').map(Number);
@@ -277,6 +307,8 @@ export function validateViewState(value: unknown): asserts value is SheetViewSta
       throw new Error('Invalid column formula');
 }
 export function changeView(state: SheetViewState, change: ViewChange): SheetViewState {
+  if (change.axis === 'rows' && hasQuery(state.query))
+    throw new Error('Clear sorting and filters before changing row structure');
   const original = state[change.axis];
   const axis = new ViewAxis(original);
   let next: ViewAxisState = { ...original };
@@ -377,10 +409,14 @@ export class ViewController {
     )
       throw new Error('View belongs to a different source');
     this.state = { ...next, revision: this.state.revision + 1 };
-    this.rows = new ViewAxis(this.state.rows);
-    this.columns = new ViewAxis(this.state.columns);
+    if (this.rows.state !== this.state.rows) this.rows = new ViewAxis(this.state.rows);
+    if (this.columns.state !== this.state.columns) this.columns = new ViewAxis(this.state.columns);
     this.onChange?.(this.state);
     this.listeners.forEach((listener) => listener());
+  }
+  setProjection(rows?: Uint32Array) {
+    if (this.rows.state !== this.state.rows || this.rows.projection !== rows)
+      this.rows = new ViewAxis(this.state.rows, rows);
   }
   change(change: ViewChange) {
     const next = changeView(this.state, change);

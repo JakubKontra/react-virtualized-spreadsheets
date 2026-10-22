@@ -1,3 +1,4 @@
+import { hasQuery, validateCellInput } from './features';
 import { shiftFormula } from './formula';
 import { mapViewFormula } from './view-formula';
 import {
@@ -25,18 +26,77 @@ export function createViewSource(source: DataSource, view: ViewController): Data
   const emit = (event: SourceEvent) => {
     if (!disposed) listeners.forEach((listener) => listener(event));
   };
+  let queryController: AbortController | undefined;
+  let queryFlight: Promise<void> = Promise.resolve();
+  let querying = false;
+  let queryError: string | undefined;
+  let queryAgain = false;
+  let queryTimer: ReturnType<typeof setTimeout> | undefined;
+  function refreshQuery() {
+    clearTimeout(queryTimer);
+    queryAgain = false;
+    queryController?.abort();
+    const controller = (queryController = new AbortController());
+    queryError = undefined;
+    if (!hasQuery(view.getSnapshot().query)) {
+      view.setProjection();
+      querying = false;
+      queryFlight = Promise.resolve();
+      emit({ revision: ++revision, mappingChanged: true, querying: false });
+      return;
+    }
+    querying = true;
+    emit({ revision: ++revision, querying: true });
+    queryFlight = Promise.resolve()
+      .then(async () => {
+        if (!source.getViewRows)
+          throw new Error('This source does not support full dataset queries');
+        const result = await source.getViewRows(view.getSnapshot(), controller.signal);
+        if (disposed || controller.signal.aborted) return;
+        sourceRevision = Math.max(sourceRevision, result.revision);
+        view.setProjection(result.rows);
+        querying = false;
+        emit({ revision: ++revision, mappingChanged: true, querying: false });
+      })
+      .catch((error) => {
+        if (!disposed && !controller.signal.aborted) {
+          querying = false;
+          queryError = String(error);
+          view.setProjection(new Uint32Array());
+          emit({ revision: ++revision, mappingChanged: true, querying: false, error: queryError });
+        }
+      })
+      .finally(() => {
+        if (!disposed && !controller.signal.aborted && queryAgain) {
+          queryAgain = false;
+          queryTimer = setTimeout(refreshQuery, 100);
+        }
+      });
+  }
   const unsubscribeSource = source.subscribe((event) => {
     if (event.revision > sourceRevision) {
       sourceRevision = event.revision;
       revision++;
+      if (hasQuery(view.getSnapshot().query)) {
+        if (querying) queryAgain = true;
+        else refreshQuery();
+      }
     }
     emit({ ...event, revision });
   });
   const unsubscribeView = view.subscribe(() => {
-    revision++;
-    emit({ revision, mappingChanged: true });
+    refreshQuery();
   });
+  if (hasQuery(view.getSnapshot().query)) refreshQuery();
   function editable(address: Address) {
+    if (
+      querying ||
+      address.row < 0 ||
+      address.row >= view.rows.count ||
+      address.col < 0 ||
+      address.col >= view.columns.count
+    )
+      return false;
     const canonical = view.canonical(address);
     const state = view.getSnapshot();
     return (
@@ -65,7 +125,17 @@ export function createViewSource(source: DataSource, view: ViewController): Data
       return view.getSnapshot().columns.owned[id]?.id ?? source.columnId(id);
     },
     isEditable: editable,
+    getSummary: source.getViewSummary
+      ? async (range, signal) => {
+          await queryFlight;
+          if (queryError) throw new Error(queryError);
+          return source.getViewSummary!(view.getSnapshot(), range, signal);
+        }
+      : undefined,
     async getBlock(range, signal) {
+      await queryFlight;
+      if (queryError) throw new Error(queryError);
+      if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
       const state = view.getSnapshot();
       const requestedRevision = revision;
       const rows = view.rows;
@@ -122,7 +192,10 @@ export function createViewSource(source: DataSource, view: ViewController): Data
           if (changedColumns.has(canonical.col) && changedColumns.get(canonical.col) !== template)
             throw new Error('Each column must use one consistent formula template');
           changedColumns.set(canonical.col, template);
-        } else cells[cellKey(canonical)] = input;
+        } else {
+          validateCellInput(patch.input, current.columnOptions?.[canonical.col]);
+          cells[cellKey(canonical)] = input;
+        }
       }
       for (const patch of mutation.columns ?? []) {
         if (!editable({ row: 0, col: patch.col })) throw new Error('Source column is read-only');
@@ -152,12 +225,15 @@ export function createViewSource(source: DataSource, view: ViewController): Data
     },
     subscribe(listener) {
       listeners.add(listener);
+      listener({ revision, querying });
       return () => {
         listeners.delete(listener);
       };
     },
     dispose() {
       disposed = true;
+      queryController?.abort();
+      clearTimeout(queryTimer);
       unsubscribeSource();
       unsubscribeView();
       listeners.clear();

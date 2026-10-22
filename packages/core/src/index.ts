@@ -7,3 +7,5 @@ export * from './view';
 export * from './view-formula';
 export * from './view-engine';
 export * from './view-source';
+
+export * from './features';

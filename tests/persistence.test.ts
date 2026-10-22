@@ -40,6 +40,28 @@ function storage() {
 }
 
 describe('view persistence', () => {
+  it('keeps the previous version and catalog when a document write exceeds storage quota', async () => {
+    const memory = storage();
+    let fail = false;
+    const adapter = new LocalStorageViewAdapter({
+      ...memory,
+      setItem(key, value) {
+        if (fail && key === 'ledger:view:mine') throw new Error('quota');
+        memory.setItem(key, value);
+      },
+    });
+    const saved = await adapter.save({ ...initial(), name: 'Original' }, null, signal());
+    fail = true;
+    await expect(
+      adapter.save({ ...initial(), name: 'Changed' }, saved.version, signal()),
+    ).rejects.toThrow('quota');
+    expect((await adapter.load('mine', signal()))?.version).toBe(saved.version);
+    expect((await adapter.list('sales', signal()))[0].name).toBe('Original');
+    fail = false;
+    await expect(
+      adapter.save({ ...initial(), name: 'Changed' }, saved.version, signal()),
+    ).resolves.toMatchObject({ state: { name: 'Changed' } });
+  });
   it('roundtrips compact state and rejects stale versions and aborted requests', async () => {
     const memory = storage();
     const adapter = new LocalStorageViewAdapter(memory);

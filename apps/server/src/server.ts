@@ -59,7 +59,18 @@ export async function createDemoServer(options: { rows?: number; tickMs?: number
       }
     };
     try {
-      if (url.pathname.startsWith('/api/views/')) {
+      if (url.pathname === '/api/views' && req.method === 'GET') {
+        send(
+          200,
+          [...savedViews.values()]
+            .filter((v) => v.state.sourceId === url.searchParams.get('sourceId'))
+            .map((v) => ({
+              viewId: v.state.viewId,
+              sourceId: v.state.sourceId,
+              name: v.state.name ?? v.state.viewId,
+            })),
+        );
+      } else if (url.pathname.startsWith('/api/views/')) {
         const id = decodeURIComponent(url.pathname.slice('/api/views/'.length));
         if (req.method === 'GET') {
           const view = savedViews.get(id);
@@ -81,13 +92,31 @@ export async function createDemoServer(options: { rows?: number; tickMs?: number
           savedViews.set(id, result);
           send(200, result);
         } else send(405, { error: 'Method not allowed' });
-      } else if (url.pathname === '/api/view-blocks' && req.method === 'POST') {
+      } else if (
+        ['/api/view-blocks', '/api/view-query', '/api/view-summary'].includes(url.pathname) &&
+        req.method === 'POST'
+      ) {
         let body = '';
         for await (const chunk of req) {
           body += chunk;
           if (body.length > 2000000) throw new Error('View exceeds 2 MB');
         }
-        send(200, await request('viewBlocks', JSON.parse(body)));
+        const method =
+          url.pathname === '/api/view-query'
+            ? 'viewQuery'
+            : url.pathname === '/api/view-summary'
+              ? 'viewSummary'
+              : 'viewBlocks';
+        const result = await request(method, JSON.parse(body));
+        if (method === 'viewQuery') {
+          const data = result as { rows: Uint32Array; revision: number };
+          res.writeHead(200, {
+            'Content-Type': 'application/octet-stream',
+            'Cache-Control': 'no-store',
+            'X-Sheet-Revision': String(data.revision),
+          });
+          res.end(Buffer.from(data.rows.buffer, data.rows.byteOffset, data.rows.byteLength));
+        } else send(200, result);
       } else if (url.pathname === '/api/meta' && req.method === 'GET')
         send(200, await request('meta'));
       else if (url.pathname === '/api/block' && req.method === 'GET') {

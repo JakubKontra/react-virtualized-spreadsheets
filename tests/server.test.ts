@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDemoServer } from '../apps/server/src/server';
 import { createSalesEngine } from '../apps/shared/sales';
-import type { SheetViewState } from '../packages/core/src';
+import { createViewState, type DataSource, type SheetViewState } from '../packages/core/src';
 import { HttpViewAdapter } from '../packages/transport/src/persistence';
 
 describe('demo server', () => {
@@ -64,6 +64,47 @@ describe('demo server', () => {
     expect(block.cells[0].value).toBe(4999998);
     controller.abort();
     await reader.cancel().catch(() => {});
+  });
+  it('queries and summarizes the full million-row source through HTTP', async () => {
+    const source = {
+      metadata: { rows: 1000000, columns: 50, revision: 2 },
+      getColumnFormula: () => null,
+    } as unknown as DataSource;
+    const view = createViewState(source, { viewId: 'query-http', sourceId: 'sales' });
+    view.query = {
+      filters: [{ col: 3, operator: 'gte', value: 9 }],
+      sorts: [{ col: 0, direction: 'desc' }],
+    };
+    const response = await fetch(`${base}/view-query`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ view }),
+    });
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toBe('application/octet-stream');
+    const rows = new Uint32Array(await response.arrayBuffer());
+    expect(rows.length).toBe(111111);
+    expect(rows[0]).toBe(999998);
+    expect(rows.at(-1)).toBe(8);
+    const summary = await (
+      await fetch(`${base}/view-summary`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          view,
+          range: { start: { row: 0, col: 3 }, end: { row: rows.length - 1, col: 3 } },
+        }),
+      })
+    ).json();
+    expect(summary).toMatchObject({ count: 111111, numericCount: 111111, sum: 999999, average: 9 });
+    const adapter = new HttpViewAdapter(`${base}/views`),
+      signal = new AbortController().signal;
+    await adapter.save({ ...view, name: 'Nine units' }, null, signal);
+    expect(await adapter.list('sales', signal)).toContainEqual({
+      viewId: 'query-http',
+      sourceId: 'sales',
+      name: 'Nine units',
+    });
   });
   it('persists isolated view versions and computes overlays without global writes', async () => {
     const view: SheetViewState = {

@@ -385,6 +385,7 @@ h1 {
   scrollbar-color: #c6d1c3 #f4f6f1;
   scrollbar-width: thin;
   overscroll-behavior: contain;
+  overflow-anchor: none;
   background: #fff;
 }
 .grid-canvas {
@@ -1020,5 +1021,234 @@ button:focus-visible,
   .row-resizer {
     height: 10px;
     bottom: 0;
+  }
+}
+
+.feature-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 16px;
+  border-top: 1px solid #e8ede4;
+  background: #fafbf8;
+}
+.feature-actions button,
+.feature-dialog button {
+  border: 1px solid #dce4d5;
+  background: white;
+  color: #47613d;
+  border-radius: 5px;
+  padding: 7px 12px;
+  font: inherit;
+  cursor: pointer;
+}
+.feature-actions button:hover,
+.feature-dialog button:hover {
+  background: #eff5e8;
+}
+.feature-dialog {
+  border: 1px solid #dce4d5;
+  border-radius: 12px;
+  padding: 0;
+  width: min(610px, calc(100vw - 32px));
+  max-height: 85vh;
+  color: #405236;
+  box-shadow: 0 20px 80px #213b2826;
+}
+.feature-dialog::backdrop {
+  background: #1d2e234d;
+}
+.feature-content {
+  padding: 24px;
+}
+.feature-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+.feature-heading h2 {
+  margin: 0;
+  font-size: 20px;
+}
+.feature-heading button {
+  font-size: 20px;
+}
+.feature-dialog h3 {
+  font-size: 13px;
+  margin: 24px 0 12px;
+}
+.feature-dialog p {
+  font-size: 13px;
+  line-height: 1.6;
+}
+.feature-dialog input,
+.feature-dialog select,
+.feature-dialog textarea {
+  min-width: 0;
+  max-width: 100%;
+  border: 1px solid #d5dfcd;
+  background: #fff;
+  color: #405236;
+  border-radius: 5px;
+  padding: 8px;
+  font: inherit;
+}
+.stack-field {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  font-size: 12px;
+  margin: 16px 0;
+}
+.control-row {
+  display: flex;
+  gap: 8px;
+  margin: 8px 0;
+  align-items: center;
+}
+.control-row select {
+  flex: 1;
+}
+.control-row input {
+  width: 100px;
+}
+.control-row input[type='color'] {
+  width: 34px;
+  padding: 2px;
+  flex-shrink: 0;
+}
+.control-row button {
+  padding: 6px 10px;
+}
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 24px;
+  flex-wrap: wrap;
+}
+.feature-dialog .primary {
+  background: #4f7541;
+  color: white;
+  border-color: #4f7541;
+}
+.settings-note {
+  color: #738368;
+  font-size: 12px !important;
+}
+.feature-dialog button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.view-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.view-list button {
+  text-align: left;
+}
+.formula-assist {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 16px;
+  background: #f8faf4;
+  border-bottom: 1px solid #dce4d5;
+  font-size: 12px;
+}
+.formula-assist [role='listbox'] {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  width: 100%;
+}
+.formula-assist button {
+  background: white;
+  border: 1px solid #dce4d5;
+  padding: 8px;
+  color: #49643e;
+  border-radius: 4px;
+  text-align: left;
+}
+.formula-assist [aria-selected='true'] {
+  background: #e4efda;
+  border-color: #729b5f;
+}
+.formula-assist small {
+  color: #7b8c71;
+}
+.cell.frozen-cell {
+  z-index: 2;
+  border-right-color: #a4ba96;
+}
+.cell.frozen-cell.current {
+  z-index: 3;
+}
+.grid-row[style*='z-index: 4'] {
+  box-shadow: 0 1px 0 #a4ba96;
+}
+.cell-handle {
+  width: 9px;
+  height: 9px;
+  padding: 0;
+  cursor: crosshair;
+  z-index: 4;
+  border-radius: 0;
+  touch-action: none;
+}
+.cell input[type='checkbox'] {
+  accent-color: #4f7541;
+  cursor: pointer;
+}
+.selection-summary {
+  min-height: 29px;
+  padding: 7px 16px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+  font-size: 11px;
+  border-top: 1px solid #dce4d5;
+  color: #7b8c71;
+}
+.selection-summary strong {
+  color: #405d35;
+  margin-left: 5px;
+  font-variant-numeric: tabular-nums;
+}
+.grid-message {
+  position: sticky;
+  left: 52px;
+  bottom: 50%;
+  width: calc(100% - 104px);
+  text-align: center;
+  background: #f1f6eb;
+  padding: 20px;
+  z-index: 8;
+  font-size: 13px;
+  border: 1px solid #cdddc3;
+  border-radius: 8px;
+}
+@media (max-width: 600px) {
+  .feature-content {
+    padding: 16px;
+  }
+  .filter-row {
+    flex-wrap: wrap;
+  }
+  .control-row select {
+    min-width: 100px;
+  }
+  .feature-actions {
+    padding: 8px;
+  }
+  .selection-summary {
+    gap: 10px;
+  }
+  .feature-dialog {
+    font-size: 13px;
   }
 }

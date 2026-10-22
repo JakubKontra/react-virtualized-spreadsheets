@@ -1,3 +1,4 @@
+import type { SelectionSummary, ViewRows } from './features';
 import type { SheetViewState, ViewController } from './view';
 export type CellInput = string | number | boolean | null;
 export type ErrorCode =
@@ -37,6 +38,7 @@ export interface DataBlock {
 }
 export interface SourceEvent {
   mappingChanged?: boolean;
+  querying?: boolean;
   revision: number;
   connection?: 'connected' | 'disconnected';
   error?: string;
@@ -52,6 +54,13 @@ export interface DataSource {
   rowId(row: number): string;
   columnId(col: number): string;
   isEditable(address: Address): boolean;
+  getSummary?(range: CellRange, signal: AbortSignal): Promise<SelectionSummary>;
+  getViewRows?(view: SheetViewState, signal: AbortSignal): Promise<ViewRows>;
+  getViewSummary?(
+    view: SheetViewState,
+    range: CellRange,
+    signal: AbortSignal,
+  ): Promise<SelectionSummary>;
   getBlock(range: CellRange, signal: AbortSignal): Promise<DataBlock>;
   getViewBlocks?(
     view: SheetViewState,
@@ -64,6 +73,12 @@ export interface DataSource {
   dispose(): void;
 }
 export interface CalculationAdapter {
+  queryView?(view: SheetViewState, signal: AbortSignal): Promise<ViewRows>;
+  summarizeView?(
+    view: SheetViewState,
+    range: CellRange,
+    signal: AbortSignal,
+  ): Promise<SelectionSummary>;
   calculateView?(
     view: SheetViewState,
     ranges: CellRange[],

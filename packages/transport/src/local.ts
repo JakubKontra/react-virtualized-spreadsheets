@@ -2,6 +2,8 @@ import {
   EngineSession,
   ViewCalculationRegistry,
   type SheetViewState,
+  type ViewRows,
+  type SelectionSummary,
   type Address,
   type CalculationAdapter,
   type CellRange,
@@ -27,6 +29,12 @@ export class WorkerCalculationAdapter implements CalculationAdapter {
       { view, ranges },
       signal,
     );
+  }
+  queryView(view: SheetViewState, signal: AbortSignal) {
+    return this.rpc.request<ViewRows>('viewQuery', { view }, signal);
+  }
+  summarizeView(view: SheetViewState, range: CellRange, signal: AbortSignal) {
+    return this.rpc.request<SelectionSummary>('viewSummary', { view, range }, signal);
   }
   apply(mutation: Mutation, revision: number, signal: AbortSignal) {
     return this.rpc.request<{ revision: number }>('mutate', { mutation, revision }, signal);
@@ -56,6 +64,12 @@ export function createLocalSource(options: LocalSourceOptions): DataSource {
     columnId: (col) => `column:${col}`,
     isEditable: (address) => options.editable?.(address) ?? true,
     getBlock: (range, signal) => options.calculator.calculate(range, signal),
+    getViewRows: options.calculator.queryView
+      ? (view, signal) => options.calculator.queryView!(view, signal)
+      : undefined,
+    getViewSummary: options.calculator.summarizeView
+      ? (view, range, signal) => options.calculator.summarizeView!(view, range, signal)
+      : undefined,
     getViewBlocks: options.calculator.calculateView
       ? (view, ranges, signal) => options.calculator.calculateView!(view, ranges, signal)
       : undefined,
@@ -99,6 +113,11 @@ export function installCalculationWorker(
       else if (method === 'viewBlocks') {
         const data = payload as { view: SheetViewState; ranges: CellRange[] };
         result = views.blocks(data.view, data.ranges, session.revision);
+      } else if (method === 'viewQuery') {
+        result = views.query((payload as { view: SheetViewState }).view, session.revision);
+      } else if (method === 'viewSummary') {
+        const data = payload as { view: SheetViewState; range: CellRange };
+        result = views.summary(data.view, data.range, session.revision);
       } else if (method === 'mutate') {
         const data = payload as { mutation: Mutation; revision: number };
         result = session.mutate(data.mutation, data.revision);

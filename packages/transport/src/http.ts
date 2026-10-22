@@ -6,6 +6,7 @@ import type {
   Mutation,
   SheetMetadata,
   SourceEvent,
+  SelectionSummary,
 } from '@sheet/core';
 
 export interface RemoteMetadata extends SheetMetadata {
@@ -86,6 +87,29 @@ export async function createHttpSource(options: HttpSourceOptions): Promise<Data
         c1: String(range.end.col),
       });
       return json<DataBlock>(await request(`${base}/block?${params}`, { signal }));
+    },
+    async getViewRows(view, signal) {
+      const response = await request(`${base}/view-query`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ view }),
+        signal,
+      });
+      if (!response.ok) throw new Error((await response.json()).error ?? 'Query failed');
+      return {
+        rows: new Uint32Array(await response.arrayBuffer()),
+        revision: Number(response.headers.get('X-Sheet-Revision')),
+      };
+    },
+    async getViewSummary(view, range, signal) {
+      return json<SelectionSummary>(
+        await request(`${base}/view-summary`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ view, range }),
+          signal,
+        }),
+      );
     },
     async getViewBlocks(view, ranges, signal) {
       return json<{ blocks: DataBlock[]; revision: number }>(

@@ -29,6 +29,9 @@ parentPort!.on('message', ({ id, method, payload }) => {
     else if (method === 'block') result = session.block(payload as CellRange);
     else if (method === 'viewBlocks')
       result = views.blocks(payload.view, payload.ranges, session.revision);
+    else if (method === 'viewQuery') result = views.query(payload.view, session.revision);
+    else if (method === 'viewSummary')
+      result = views.summary(payload.view, payload.range, session.revision);
     else if (method === 'mutate') {
       const data = payload as { mutation: Mutation; revision: number };
       if (

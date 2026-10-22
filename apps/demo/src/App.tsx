@@ -11,7 +11,8 @@ import {
   createSpreadsheet,
   createViewState,
   isError,
-  parseInput,
+  formatCellValue,
+  matchesFilter,
   type SpreadsheetStore,
 } from '@sheet/core';
 import { useCell, useSpreadsheet } from '@sheet/react';
@@ -24,11 +25,11 @@ import {
 } from '@sheet/transport';
 import { SALES_COLUMNS, SALES_FORMULAS } from '../../shared/sales';
 import { ViewControls } from './ViewControls';
+import { FeatureControls } from './FeatureControls';
 
 const widths = [154, 130, 204, 94, 128, 112, 150, 138];
 const columnWidth = (col: number) => widths[col] ?? 132;
 const number = new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 });
-const money = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'EUR' });
 declare global {
   interface Window {
     __sheet?: SpreadsheetStore;
@@ -36,6 +37,10 @@ declare global {
 }
 
 export function App() {
+  const [activeViews, setActiveViews] = useState(() => ({
+    local: localStorage.getItem('ledger:active:local') ?? 'sales-local-v1',
+    remote: localStorage.getItem('ledger:active:remote') ?? 'sales-remote-v1',
+  }));
   const [mode, setMode] = useState<'local' | 'remote'>('local');
   const [store, setStore] = useState<SpreadsheetStore | null>(null);
   const [error, setError] = useState('');
@@ -65,7 +70,7 @@ export function App() {
         return;
       }
       const adapter = new LocalStorageViewAdapter(localStorage);
-      const viewId = `sales-${mode}-v1`;
+      const viewId = activeViews[mode];
       let saved;
       try {
         saved = await adapter.load(viewId, controller.signal);
@@ -85,8 +90,20 @@ export function App() {
           ownedColumns: Array.from({ length: 44 }, (_, i) => i + 6),
           labels: Object.fromEntries(SALES_COLUMNS.map((name, index) => [index, name])),
         });
+      if (!saved) {
+        viewState.name = 'October sales';
+        viewState.columnOptions = {
+          1: { kind: 'date' },
+          3: { kind: 'number', decimals: 0 },
+          4: { kind: 'currency', currency: 'EUR' },
+          5: { kind: 'percent' },
+          6: { kind: 'currency', currency: 'EUR' },
+          7: { kind: 'currency', currency: 'EUR' },
+        };
+      }
       instance = createSpreadsheet({ source, viewState });
       binding = new ViewPersistenceBinding(instance.view!, adapter, saved?.version ?? null);
+      if (saved && !viewState.name) instance.view!.replace({ ...viewState, name: 'October sales' });
       setSaving(binding);
       setStore(instance);
       if (import.meta.env.DEV) window.__sheet = instance;
@@ -101,17 +118,35 @@ export function App() {
       instance?.dispose();
       if (window.__sheet === instance) delete window.__sheet;
     };
-  }, [mode, attempt]);
+  }, [mode, attempt, activeViews]);
   async function switchMode(next: 'local' | 'remote') {
     try {
       const state = store?.getSnapshot();
       if (state?.editing) {
         if (String(store!.readCell(state.editing).input ?? '') === (state.draft ?? ''))
           store!.cancelEdit();
-        else await store!.edit([{ ...state.editing, input: parseInput(state.draft ?? '') }]);
+        else
+          await store!.edit([
+            { ...state.editing, input: store!.parseInput(state.draft ?? '', state.editing) },
+          ]);
       }
       await saving?.flush();
       if (saving?.getSnapshot().status !== 'error') setMode(next);
+    } catch (error) {
+      store?.setError(error);
+    }
+  }
+  async function switchView(id: string) {
+    try {
+      const state = store?.getSnapshot();
+      if (state?.editing)
+        await store!.edit([
+          { ...state.editing, input: store!.parseInput(state.draft ?? '', state.editing) },
+        ]);
+      await saving?.flush();
+      if (saving?.getSnapshot().status === 'error') throw new Error(saving.getSnapshot().error!);
+      localStorage.setItem(`ledger:active:${mode}`, id);
+      setActiveViews((previous) => ({ ...previous, [mode]: id }));
     } catch (error) {
       store?.setError(error);
     }
@@ -185,7 +220,12 @@ export function App() {
           </span>
         </section>
         {store ? (
-          <Sheet key={mode + attempt} store={store} saving={saving!} />
+          <Sheet
+            key={mode + attempt + activeViews[mode]}
+            store={store}
+            saving={saving!}
+            onSwitchView={switchView}
+          />
         ) : (
           <div className="loading-panel">
             {error ? (
@@ -221,6 +261,9 @@ const Cell = memo(function Cell({
   left,
   width,
   active,
+  frozen,
+  handle,
+  toggle,
 }: {
   store: SpreadsheetStore;
   row: number;
@@ -229,25 +272,42 @@ const Cell = memo(function Cell({
   left: number;
   width: number;
   active: boolean;
+  frozen: boolean;
+  toggle: (row: number, col: number, value: boolean) => Promise<void>;
+  handle?: import('react').ButtonHTMLAttributes<HTMLButtonElement>;
 }) {
   const cell = useCell(store, row, col);
   const canonicalCol = store.view?.columns.canonicalAt(col) ?? col;
-  const text = isError(cell.value)
-    ? cell.value.error
-    : cell.value === null
-      ? ''
-      : typeof cell.value === 'number'
-        ? canonicalCol === 5
-          ? `${number.format(cell.value * 100)}%`
-          : [4, 6, 7].includes(canonicalCol)
-            ? money.format(cell.value)
-            : number.format(cell.value)
-        : String(cell.value);
+  const option = store.columnOptions(col);
+  const text = formatCellValue(
+    cell.value,
+    option ??
+      ([4, 6, 7].includes(canonicalCol)
+        ? { kind: 'currency' }
+        : canonicalCol === 5
+          ? { kind: 'percent' }
+          : undefined),
+    'en-US',
+  );
+  const rule = store.view
+    ?.getSnapshot()
+    .conditionalRules?.find((r) => r.col === canonicalCol && matchesFilter(cell.value, r));
   return (
     <div
       {...props}
-      className={`cell ${canonicalCol >= 3 ? 'numeric' : ''} ${store.view?.columns.isOwned(col) ? 'computed' : ''} ${active ? 'current' : ''} ${cell.status === 'error' ? 'cell-error' : ''} ${cell.status === 'calculating' ? 'calculating' : ''}`}
-      style={{ left, width }}
+      className={`cell ${canonicalCol >= 3 ? 'numeric' : ''} ${store.view?.columns.isOwned(col) ? 'computed' : ''} ${active ? 'current' : ''} ${frozen ? 'frozen-cell' : ''} ${cell.status === 'error' ? 'cell-error' : ''} ${cell.status === 'calculating' ? 'calculating' : ''}`}
+      style={{
+        left,
+        width,
+        ...(rule
+          ? {
+              color: rule.color,
+              background: rule.background,
+              fontWeight: rule.bold ? 700 : undefined,
+            }
+          : {}),
+        ...props.style,
+      }}
       title={
         isError(cell.value)
           ? cell.value.message
@@ -257,12 +317,42 @@ const Cell = memo(function Cell({
       }
       data-status={cell.status}
     >
-      {cell.status === 'loading' ? <span className="skeleton" /> : <span>{text}</span>}
-      {active && <span className="cell-handle" />}
+      {cell.status === 'loading' ? (
+        <span className="skeleton" />
+      ) : option?.kind === 'checkbox' &&
+        (typeof cell.value === 'boolean' || cell.value === null) ? (
+        <input
+          type="checkbox"
+          aria-label={`Toggle ${store.labelAddress({ row, col })}`}
+          checked={cell.value === true}
+          disabled={!store.source.isEditable({ row, col }) || cell.status === 'calculating'}
+          onPointerDown={(e) => e.stopPropagation()}
+          onChange={(e) => {
+            void toggle(row, col, e.target.checked).catch((error) => store.setError(error));
+          }}
+        />
+      ) : (
+        <span>{text}</span>
+      )}
+      {handle && (
+        <button
+          {...handle}
+          className="cell-handle"
+          title="Drag to fill · arrow keys extend one cell"
+        />
+      )}
     </div>
   );
 });
-function Sheet({ store, saving }: { store: SpreadsheetStore; saving: ViewPersistenceBinding }) {
+function Sheet({
+  store,
+  saving,
+  onSwitchView,
+}: {
+  store: SpreadsheetStore;
+  saving: ViewPersistenceBinding;
+  onSwitchView: (id: string) => Promise<void>;
+}) {
   const saveState = useSyncExternalStore(saving.subscribe, saving.getSnapshot, saving.getSnapshot);
   const scrollRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<HTMLInputElement>(null);
@@ -271,8 +361,8 @@ function Sheet({ store, saving }: { store: SpreadsheetStore; saving: ViewPersist
   const [jump, setJump] = useState('A1');
   const selected = state.active;
   useEffect(() => {
-    setJump(store.labelAddress(selected));
-  }, [selected.row, selected.col, state.viewRevision, store]);
+    setJump(store.rows ? store.labelAddress(selected) : '');
+  }, [selected.row, selected.col, state.viewRevision, state.revision, store]);
   useEffect(() => {
     if (state.editing && state.editor === 'cell') editorRef.current?.focus();
   }, [state.editing, state.editor]);
@@ -302,7 +392,7 @@ function Sheet({ store, saving }: { store: SpreadsheetStore; saving: ViewPersist
       <div className="sheet-toolbar">
         <div className="sheet-title">
           <span className="sheet-icon">▦</span>
-          <strong>October sales</strong>
+          <strong>{store.view?.getSnapshot().name ?? 'October sales'}</strong>
           <span className="badge">{isRemote ? 'LIVE DATA' : 'WORKBOOK'}</span>
         </div>
         <div className="toolbar-actions">
@@ -337,6 +427,7 @@ function Sheet({ store, saving }: { store: SpreadsheetStore; saving: ViewPersist
           <span className="toolbar-separator" />
           <button
             className="calculation-button"
+            disabled={!store.rows || state.querying}
             onClick={() =>
               act(
                 (async () => {
@@ -363,6 +454,7 @@ function Sheet({ store, saving }: { store: SpreadsheetStore; saving: ViewPersist
           </button>
         </div>
       </div>
+      <FeatureControls store={store} sheet={sheet} saving={saving} onSwitchView={onSwitchView} />
       <div className="formula-bar">
         <form
           onSubmit={(event) => {
@@ -399,6 +491,7 @@ function Sheet({ store, saving }: { store: SpreadsheetStore; saving: ViewPersist
           spellCheck={false}
         />
         {isRemote &&
+          store.rows > 0 &&
           store.view?.columns.isOwned(selected.col) &&
           !store.view.rows.isOwned(selected.row) && (
             <span className="formula-hint">
@@ -406,6 +499,37 @@ function Sheet({ store, saving }: { store: SpreadsheetStore; saving: ViewPersist
             </span>
           )}
       </div>
+      {state.editing && sheet.draft.startsWith('=') && (
+        <div className="formula-assist" onPointerDown={(e) => e.preventDefault()}>
+          {sheet.formula.suggestions.length > 0 && (
+            <div role="listbox" aria-label="Formula functions">
+              {sheet.formula.suggestions.map((item, i) => (
+                <button
+                  key={item.name}
+                  role="option"
+                  aria-selected={i === sheet.formula.selected}
+                  onClick={() => sheet.formula.accept(i)}
+                >
+                  <strong>{item.name}</strong> {item.description}
+                </button>
+              ))}
+            </div>
+          )}
+          {sheet.formula.help && (
+            <span>
+              {sheet.formula.help.signature} · argument {sheet.formula.help.argument}
+            </span>
+          )}
+          {sheet.formula.references.map((ref, i) => (
+            <span key={i} style={{ color: ref.color }}>
+              {ref.label}
+            </span>
+          ))}
+          <small>
+            Type a function, or click and drag cells after an operator to insert a reference.
+          </small>
+        </div>
+      )}
       {state.error && (
         <div className="error-banner" role="alert">
           <span>{state.error}</span>
@@ -445,7 +569,12 @@ function Sheet({ store, saving }: { store: SpreadsheetStore; saving: ViewPersist
                 key={col.key}
                 className={`column-header ${store.view?.columns.isOwned(col.index) ? 'formula-column' : ''}`}
                 data-column-id={store.source.columnId(col.index)}
-                style={{ left: col.start, width: col.size }}
+                style={{
+                  left: sheet.displayColumn(col.index, col.start),
+                  width: col.size,
+                  zIndex: col.index < sheet.frozenColumns ? 2 : undefined,
+                  background: col.index < sheet.frozenColumns ? '#edf2e8' : undefined,
+                }}
               >
                 <button
                   className="column-letter drag-handle"
@@ -485,7 +614,12 @@ function Sheet({ store, saving }: { store: SpreadsheetStore; saving: ViewPersist
               aria-rowindex={row.index + 1}
               key={row.key}
               className="grid-row"
-              style={{ top: row.start, width: sheet.totalWidth, height: row.size }}
+              style={{
+                top: sheet.displayRow(row.index, row.start),
+                width: sheet.totalWidth,
+                height: row.size,
+                zIndex: row.index < sheet.frozenRows ? 4 : undefined,
+              }}
             >
               <div
                 {...sheet.gestures.headerProps('rows', row.index)}
@@ -520,7 +654,23 @@ function Sheet({ store, saving }: { store: SpreadsheetStore; saving: ViewPersist
                   row={row.index}
                   col={col.index}
                   props={sheet.getCellProps({ row: row.index, col: col.index })}
-                  left={col.start}
+                  left={sheet.displayColumn(col.index, col.start)}
+                  frozen={col.index < sheet.frozenColumns}
+                  toggle={async (row, col, value) => {
+                    if (await sheet.commitEdit()) {
+                      await store.ensureRange({ start: { row, col }, end: { row, col } });
+                      await store.edit([{ row, col, input: value }]);
+                      store.select({ row, col });
+                    }
+                  }}
+                  handle={
+                    !state.editing &&
+                    state.selectionKind === 'cells' &&
+                    row.index === sheet.selection.end.row &&
+                    col.index === sheet.selection.end.col
+                      ? sheet.fillHandleProps
+                      : undefined
+                  }
                   width={col.size}
                   active={selected.row === row.index && selected.col === col.index}
                 />
@@ -530,13 +680,69 @@ function Sheet({ store, saving }: { store: SpreadsheetStore; saving: ViewPersist
           {state.editing && state.editor === 'cell' && (
             <input
               {...sheet.editorProps}
+              type={store.columnOptions(state.editing.col)?.kind === 'date' ? 'date' : 'text'}
+              list={
+                store.columnOptions(state.editing.col)?.kind === 'select'
+                  ? 'cell-choices'
+                  : undefined
+              }
               ref={editorRef}
               className="cell-editor"
               style={sheet.cellRect(state.editing)}
               spellCheck={false}
             />
           )}
+          {state.editing && store.columnOptions(state.editing.col)?.kind === 'select' && (
+            <datalist id="cell-choices">
+              {store.columnOptions(state.editing.col)?.options?.map((option) => (
+                <option key={option} value={option} />
+              ))}
+            </datalist>
+          )}
         </div>
+        {(state.querying || !store.rows) && (
+          <div className="grid-message" role="status">
+            {state.querying
+              ? 'Searching and sorting every row…'
+              : 'No matching rows. Clear or adjust your filters.'}
+          </div>
+        )}
+      </div>
+      <div className="selection-summary" aria-live="polite">
+        {sheet.summary.loading ? (
+          'Calculating selection…'
+        ) : sheet.summary.error ? (
+          'Selection summary unavailable'
+        ) : sheet.summary.value ? (
+          <>
+            <span>
+              Count <strong>{number.format(sheet.summary.value.count)}</strong>
+            </span>
+            <span>
+              Sum <strong>{number.format(sheet.summary.value.sum)}</strong>
+            </span>
+            <span>
+              Average{' '}
+              <strong>
+                {sheet.summary.value.average === null
+                  ? '—'
+                  : number.format(sheet.summary.value.average)}
+              </strong>
+            </span>
+            <span>
+              Min{' '}
+              <strong>
+                {sheet.summary.value.min === null ? '—' : number.format(sheet.summary.value.min)}
+              </strong>
+            </span>
+            <span>
+              Max{' '}
+              <strong>
+                {sheet.summary.value.max === null ? '—' : number.format(sheet.summary.value.max)}
+              </strong>
+            </span>
+          </>
+        ) : null}
       </div>
       <ViewControls sheet={sheet} store={store} />
       <div className="sheet-bottom">

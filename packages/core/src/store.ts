@@ -1,3 +1,4 @@
+import { createFillPatches, parseTypedInput, type ViewSettings } from './features';
 import { copyRange, pasteCells, type ClipboardData } from './clipboard';
 import { shiftFormula } from './formula';
 import { ViewAxis, ViewController, type Axis, type SheetViewState, type ViewChange } from './view';
@@ -38,6 +39,7 @@ export interface SpreadsheetState {
   viewRevision: number;
   connection: 'connected' | 'disconnected';
   pending: boolean;
+  querying: boolean;
   loading: number;
   error: string | null;
   canUndo: boolean;
@@ -70,8 +72,14 @@ export class SpreadsheetStore {
   private redoStack: HistoryEntry[] = [];
   private clipboard: ClipboardData | null = null;
   private clipboardToken = '';
-  private viewport: CellRange | null = null;
+  private viewport: CellRange[] = [];
   private generation = 0;
+  private queryAnchor: {
+    active: Address;
+    editing: Address | null;
+    start: Address;
+    end: Address;
+  } | null = null;
   private disposed = false;
   private mutationController: AbortController | null = null;
   private unsubscribe: () => void;
@@ -103,6 +111,7 @@ export class SpreadsheetStore {
       editing: null,
       connection: 'connected',
       pending: false,
+      querying: false,
       loading: 0,
       error: null,
       canUndo: false,
@@ -111,6 +120,15 @@ export class SpreadsheetStore {
     };
     this.unsubscribe = this.source.subscribe((event) => {
       if (this.disposed) return;
+      if (event.querying && !this.state.querying && this.view && this.rows) {
+        this.queryAnchor = {
+          active: this.view.canonical(this.state.active),
+          editing: this.state.editing ? this.view.canonical(this.state.editing) : null,
+          start: this.view.canonical(this.state.selection.start),
+          end: this.view.canonical(this.state.selection.end),
+        };
+      }
+      if (event.querying !== undefined) this.update({ querying: event.querying });
       if (event.connection) this.update({ connection: event.connection });
       if (event.error) this.update({ error: event.error });
       if (event.revision > this.state.revision)
@@ -124,7 +142,14 @@ export class SpreadsheetStore {
     return this.source.view;
   }
   logicalAddress(address: Address) {
-    return this.view?.logical(address) ?? address;
+    return this.rows
+      ? (this.view?.logical(address) ?? address)
+      : {
+          row: 0,
+          col: this.view
+            ? this.view.columns.logicalIndex(this.view.columns.canonicalAt(address.col))
+            : address.col,
+        };
   }
   labelAddress(address: Address) {
     return addressLabel(this.logicalAddress(address));
@@ -281,15 +306,25 @@ export class SpreadsheetStore {
     throw new Error('The sheet changed while loading. Try again.');
   }
   setViewport(range: CellRange) {
+    this.setViewports([range]);
+  }
+  setViewports(ranges: CellRange[]) {
     if (this.disposed) return;
-    this.viewport = range;
-    const wanted = new Set(this.ids(range));
+    this.viewport = this.rows ? ranges : [];
+    if (this.state.querying) return;
+    const wanted = new Set(this.viewport.flatMap((range) => this.ids(range)));
     for (const [id, flight] of this.flights)
       if (!wanted.has(id)) {
         flight.controller.abort();
         this.flights.delete(id);
       }
-    void this.ensureRange(range).catch((error) => this.setError(error));
+    if (wanted.size > this.maxBlocks) {
+      this.setError('Viewport exceeds cache capacity');
+      return;
+    }
+    void Promise.all([...wanted].map((id) => this.fetchBlock(id))).catch((error) =>
+      this.setError(error),
+    );
   }
   private invalidate(revision: number, mappingChanged = false) {
     this.generation++;
@@ -300,16 +335,40 @@ export class SpreadsheetStore {
       this.blocks.clear();
       this.notify(keys);
       const clamp = (address: Address) => ({
-        row: Math.min(address.row, this.rows - 1),
+        row: Math.max(0, Math.min(address.row, this.rows - 1)),
         col: Math.min(address.col, this.columns - 1),
       });
-      if (this.viewport)
-        this.viewport = { start: clamp(this.viewport.start), end: clamp(this.viewport.end) };
+      this.viewport = this.rows
+        ? this.viewport.map((range) => ({ start: clamp(range.start), end: clamp(range.end) }))
+        : [];
+      const anchor = this.queryAnchor;
+      const visible = (address: Address | null) => {
+        if (!address || !this.view) return null;
+        const row = this.view.rows.visibleIndex(address.row),
+          col = this.view.columns.visibleIndex(address.col);
+        return row < 0 || col < 0 ? null : { row, col };
+      };
+      const active = visible(anchor?.active ?? null) ?? clamp(this.state.active);
+      const editing =
+        anchor?.editing && this.state.editing ? visible(anchor.editing) : this.state.editing;
+      const lostDraft = !!anchor?.editing && !editing && this.state.draft !== null;
+      if (!this.state.querying) this.queryAnchor = null;
       this.update({
-        active: clamp(this.state.active),
+        ...(anchor
+          ? {
+              editing,
+              draft: lostDraft ? null : this.state.draft,
+              ...(lostDraft
+                ? {
+                    error: `The edited row no longer matches the query. Unsaved draft: ${this.state.draft}`,
+                  }
+                : {}),
+            }
+          : {}),
+        active,
         selection: {
-          start: clamp(this.state.selection.start),
-          end: clamp(this.state.selection.end),
+          start: visible(anchor?.start ?? null) ?? clamp(this.state.selection.start),
+          end: visible(anchor?.end ?? null) ?? clamp(this.state.selection.end),
         },
         viewRevision: this.view?.getSnapshot().revision ?? 0,
       });
@@ -320,7 +379,7 @@ export class SpreadsheetStore {
       this.notify(block.cells.keys());
     }
     this.update({ revision, loading: 0 });
-    if (this.viewport) this.setViewport(this.viewport);
+    this.setViewports(this.viewport);
   }
   refresh() {
     this.invalidate(this.source.metadata.revision);
@@ -337,6 +396,7 @@ export class SpreadsheetStore {
       throw new Error('Address is outside the sheet');
   }
   select(address: Address, extend = false) {
+    if (this.state.querying) return;
     this.assertAddress(address);
     this.update({
       selection: { start: extend ? this.state.selection.start : address, end: address },
@@ -347,6 +407,18 @@ export class SpreadsheetStore {
     });
   }
   selectAxis(axis: Axis, index: number, extend = false) {
+    if (this.state.querying) return;
+    if (!this.rows) {
+      if (axis === 'columns' && index >= 0 && index < this.columns)
+        this.update({
+          active: { row: 0, col: index },
+          selection: { start: { row: 0, col: index }, end: { row: 0, col: index } },
+          selectionKind: 'columns',
+          editing: null,
+          draft: null,
+        });
+      return;
+    }
     const coordinate = axis === 'rows' ? 'row' : 'col';
     const anchor =
       extend && this.state.selectionKind === axis ? this.state.selection.start[coordinate] : index;
@@ -364,6 +436,7 @@ export class SpreadsheetStore {
     });
   }
   selectAll() {
+    if (!this.rows || this.state.querying) return;
     this.update({
       selection: { start: { row: 0, col: 0 }, end: { row: this.rows - 1, col: this.columns - 1 } },
       selectionKind: 'all',
@@ -431,16 +504,17 @@ export class SpreadsheetStore {
   }
   private replaceView(next: SheetViewState) {
     if (!this.view) throw new Error('Configure viewState to change the view');
-    const active = this.view.canonical(this.state.active);
+    const active = this.rows ? this.view.canonical(this.state.active) : { row: 0, col: 0 };
     const before = this.view.getSnapshot();
     this.view.replace(next);
     this.rebaseClipboard(before, this.view.getSnapshot());
     const row = this.view.rows.visibleIndex(active.row);
     const col = this.view.columns.visibleIndex(active.col);
-    this.select({
-      row: row < 0 ? Math.min(this.state.active.row, this.rows - 1) : row,
-      col: col < 0 ? Math.min(this.state.active.col, this.columns - 1) : col,
-    });
+    if (this.rows)
+      this.select({
+        row: row < 0 ? Math.min(this.state.active.row, this.rows - 1) : row,
+        col: col < 0 ? Math.min(this.state.active.col, this.columns - 1) : col,
+      });
   }
   setViewState(next: SheetViewState) {
     this.replaceView(next);
@@ -450,18 +524,54 @@ export class SpreadsheetStore {
     if (this.state.editing || this.state.pending)
       throw new Error('Finish editing before changing the view');
     const beforeView = this.view.getSnapshot();
-    const active = this.view.canonical(this.state.active);
+    const active = this.rows ? this.view.canonical(this.state.active) : { row: 0, col: 0 };
     this.view.change(change);
     const afterView = this.view.getSnapshot();
     if (beforeView === afterView) return;
     this.rebaseClipboard(beforeView, afterView);
     const row = this.view.rows.visibleIndex(active.row);
     const col = this.view.columns.visibleIndex(active.col);
-    this.select({
-      row: row < 0 ? Math.min(this.state.active.row, this.rows - 1) : row,
-      col: col < 0 ? Math.min(this.state.active.col, this.columns - 1) : col,
-    });
+    if (this.rows)
+      this.select({
+        row: row < 0 ? Math.min(this.state.active.row, this.rows - 1) : row,
+        col: col < 0 ? Math.min(this.state.active.col, this.columns - 1) : col,
+      });
     this.record({ beforeView, afterView });
+  }
+  configure(settings: ViewSettings) {
+    if (!this.view) throw new Error('Configure viewState to save settings');
+    if (this.state.editing || this.state.pending)
+      throw new Error('Finish editing before changing settings');
+    const beforeView = this.view.getSnapshot();
+    this.clearError();
+    this.view.replace({ ...beforeView, ...settings });
+    this.record({ beforeView, afterView: this.view.getSnapshot() });
+  }
+  columnOptions(col: number) {
+    return this.view?.getSnapshot().columnOptions?.[this.view.columns.canonicalAt(col)];
+  }
+  parseInput(text: string, address = this.state.active) {
+    return parseTypedInput(text, this.columnOptions(address.col));
+  }
+  async fill(target: CellRange, source = this.state.selection) {
+    target = normalizeRange(target);
+    source = normalizeRange(source);
+    this.assertAddress(target.start);
+    this.assertAddress(target.end);
+    if ((target.end.row - target.start.row + 1) * (target.end.col - target.start.col + 1) > 10000)
+      throw new Error('Fill at most 10,000 cells');
+    const revision = this.state.revision;
+    await this.ensureRange(target);
+    if (revision !== this.state.revision) throw new Error('The sheet changed while preparing fill');
+    const patches = createFillPatches(
+      source,
+      target,
+      (a) => this.readCell(a).input,
+      (a) => this.logicalAddress(a),
+    );
+    if (patches.length) await this.edit(patches);
+    this.select(target.start);
+    this.select(target.end, true);
   }
   setError(error: unknown) {
     this.update({ error: error instanceof Error ? error.message : String(error) });

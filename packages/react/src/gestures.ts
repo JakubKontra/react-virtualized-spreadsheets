@@ -22,6 +22,8 @@ interface Options {
   rowHeaderWidth: number;
   columnHeaderHeight: number;
   commit: () => Promise<boolean>;
+  offset: (axis: Axis, local: number) => number;
+  display: (axis: Axis, index: number, start: number) => number;
 }
 export interface HeaderMenu {
   axis: Axis;
@@ -165,12 +167,14 @@ export function useSheetGestures(options: Options) {
                 rect.bottom,
               );
           }
-          const x =
-            Math.max(opts.rowHeaderWidth, Math.min(rect.width - 1, current.x - rect.left)) +
-            element.scrollLeft;
-          const y =
-            Math.max(opts.columnHeaderHeight, Math.min(rect.height - 1, current.y - rect.top)) +
-            element.scrollTop;
+          const x = opts.offset(
+            'columns',
+            Math.max(opts.rowHeaderWidth, Math.min(rect.width - 1, current.x - rect.left)),
+          );
+          const y = opts.offset(
+            'rows',
+            Math.max(opts.columnHeaderHeight, Math.min(rect.height - 1, current.y - rect.top)),
+          );
           if (current.kind === 'selection') {
             const row = opts.itemAt('rows', y)?.index;
             const col = opts.itemAt('columns', x)?.index;
@@ -202,14 +206,28 @@ export function useSheetGestures(options: Options) {
                   : opts.item(current.axis, current.before).start;
             const line = horizontal
               ? {
-                  left: rect.left + boundary - element.scrollLeft,
+                  left:
+                    rect.left +
+                    opts.display(
+                      current.axis,
+                      current.kind === 'resize' ? current.start : current.before,
+                      boundary,
+                    ) -
+                    element.scrollLeft,
                   top: rect.top,
                   width: 2,
                   height: rect.height,
                 }
               : {
                   left: rect.left,
-                  top: rect.top + boundary - element.scrollTop,
+                  top:
+                    rect.top +
+                    opts.display(
+                      current.axis,
+                      current.kind === 'resize' ? current.start : current.before,
+                      boundary,
+                    ) -
+                    element.scrollTop,
                   width: rect.width,
                   height: 2,
                 };
