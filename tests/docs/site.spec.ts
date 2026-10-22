@@ -27,7 +27,13 @@ test('homepage, navigation and locally indexed search', async ({ page }) => {
   await expect(
     page.getByRole('heading', { name: 'A spreadsheet. Part of your app.' }),
   ).toBeVisible();
-  await expect(page.getByRole('link', { name: 'Repository', exact: true })).toHaveCount(0);
+  const repository = page.getByRole('link', { name: /^Repository/ });
+  if (process.env.DOCS_REPOSITORY_URL)
+    await expect(repository).toHaveAttribute(
+      'href',
+      process.env.DOCS_REPOSITORY_URL.replace(/\/$/, ''),
+    );
+  else await expect(repository).toHaveCount(0);
   await page.getByRole('link', { name: 'Start building' }).click();
   await expect(page.getByRole('heading', { name: 'Installation', exact: true })).toBeVisible();
   const search = page.getByPlaceholder('Search', { exact: true });

@@ -11,3 +11,5 @@ benchmark-results/
 apps/docs/.docusaurus/
 apps/docs/build/
 apps/docs/static/examples/
+
+artifacts/

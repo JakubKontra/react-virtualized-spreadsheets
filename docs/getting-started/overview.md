@@ -39,7 +39,7 @@ Virtualization bounds rendered cells; the block cache bounds browser data. Calcu
 
 ## Project status
 
-The packages are version `0.1.0` workspace packages and **are not published to npm**. APIs can change before a stable release. The headless React package supports React 18+; the UI package needs React 19+ and Tailwind CSS 4. See [installation](installation.md) for workspace and tarball use.
+The packages are version `0.1.0-beta.1` workspace packages and **are not published to npm**. APIs can change before a stable release. The headless React package supports React 18+; the UI package needs React 19+ and Tailwind CSS 4. Beta archives are available from the [GitHub release](https://github.com/jakubkontra/react-virtualized-spreadsheets/releases/tag/v0.1.0-beta.1). See [installation](installation.md) for workspace and tarball use.
 
 Available now: editing and history, relative/absolute formula references, autofill, clipboard modes, frozen panes, sorting, filtering, typed columns, conditional formatting, view layout changes and persistence. See the [roadmap](../roadmap.md) for the next priorities.
 

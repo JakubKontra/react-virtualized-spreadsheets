@@ -58,6 +58,7 @@ const config: Config = {
         { type: 'docSidebar', sidebarId: 'docs', label: 'Docs', position: 'left' },
         { to: '/docs/examples/basic', label: 'Examples', position: 'left' },
         { to: '/docs/roadmap', label: 'Roadmap', position: 'left' },
+        { href: 'https://ko-fi.com/jakubkontra', label: 'Ko-fi', position: 'right' },
         ...(repository
           ? [{ href: repository, label: 'Repository', position: 'right' as const }]
           : []),
@@ -85,6 +86,7 @@ const config: Config = {
           items: [
             { label: 'Roadmap', to: '/docs/roadmap' },
             { label: 'Contribution guide', to: '/docs/contributing' },
+            { label: 'Support on Ko-fi', href: 'https://ko-fi.com/jakubkontra' },
           ],
         },
       ],

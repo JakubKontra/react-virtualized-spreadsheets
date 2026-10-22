@@ -2,6 +2,10 @@
 
 A headless TypeScript spreadsheet with two-axis virtualization, a small formula engine, and interchangeable local-worker / server data sources. The optional `@sheet/ui` package adds a reusable shadcn/ui renderer; the sales workbook demonstrates its integration.
 
+**[Documentation](https://jakubkontra.github.io/react-virtualized-spreadsheets/)** · **[Beta v0.1.0-beta.1](https://github.com/jakubkontra/react-virtualized-spreadsheets/releases/tag/v0.1.0-beta.1)** · [Changelog](CHANGELOG.md)
+
+The beta is distributed through GitHub release archives. The `@sheet/*` packages are not published to npm.
+
 ## Documentation
 
 Run `pnpm dev:docs` and open **http://127.0.0.1:3000** for the Docusaurus documentation, live examples, use cases, API reference, roadmap and contribution guide. The examples work without the demo API.
@@ -210,3 +214,11 @@ pnpm benchmark:browser
 ```
 
 Benchmark JSON is written to the ignored `benchmark-results/` directory. Browser tests run against local dev servers and do not need a cloud service.
+
+## License
+
+[MIT](LICENSE) © 2026 Jakub Kontra. See `packages/ui/THIRD_PARTY_NOTICES.md` for third-party component notices.
+
+## Support the project
+
+If this project helps your work, you can [support its development on Ko-fi](https://ko-fi.com/jakubkontra).

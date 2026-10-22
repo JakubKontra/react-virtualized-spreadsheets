@@ -77,8 +77,14 @@ DOCS_BASE_URL=/spreadsheet/ pnpm test:docs
 
 Set `DOCS_URL` to the deployment origin and `DOCS_BASE_URL` to its path before building. Optional `DOCS_REPOSITORY_URL` adds repository/edit links; `DOCS_REPOSITORY_BRANCH` defaults to `main`. Without a repository URL, those links are hidden. These commands generate static files; they do not publish a website. Rebuild without the environment variables to return to root-path local serving.
 
+The `Documentation` GitHub Actions workflow publishes `main` to GitHub Pages. The `Checks` workflow validates pushes and pull requests. Releases are published separately: update all four package versions and the changelog, run the relevant checks, and use `pnpm pack:release` to produce the package archives and `SHA256SUMS` under `artifacts/v<version>`. Mark beta releases as GitHub prereleases; packaging does not publish to npm.
+
 ## Pull requests
 
 Use a concise title such as `fix(core): preserve references after a column move`. Explain the trigger, resulting behavior, important tradeoffs and checks run. Keep tests with the behavior they cover. Include screenshots for visible UI changes and note any checks you could not run. Open a draft when feedback is needed before the change is ready.
 
-No project license has been declared in this repository yet. Do not infer one from a dependency or the third-party notices included with the UI package. License selection and publication are part of release readiness.
+The project is licensed under the [MIT License](https://github.com/jakubkontra/react-virtualized-spreadsheets/blob/main/LICENSE). Preserve the existing license and third-party notices when modifying or redistributing code. The UI package includes separate notices for its bundled component sources.
+
+## Support the project
+
+You can also [support development on Ko-fi](https://ko-fi.com/jakubkontra). Bug reports, documentation improvements and focused code contributions are welcome too.

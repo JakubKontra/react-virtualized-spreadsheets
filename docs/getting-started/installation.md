@@ -53,7 +53,42 @@ The [UI guide](../ui.md) includes the Vite configuration and theme details. `app
 
 ## Consume outside this workspace
 
-There is no public npm installation yet. Build and pack all four packages locally:
+### Install the beta archives
+
+Download the four package archives into your application's `vendor` directory:
+
+```bash
+gh release download v0.1.0-beta.1 \
+  --repo jakubkontra/react-virtualized-spreadsheets \
+  --pattern '*.tgz' --pattern SHA256SUMS --dir vendor
+```
+
+For a pnpm application, merge these entries into `package.json`. The overrides keep transitive `@sheet/*` dependencies on the downloaded beta archives instead of looking them up on npm:
+
+```json
+{
+  "dependencies": {
+    "@sheet/core": "file:./vendor/sheet-core-0.1.0-beta.1.tgz",
+    "@sheet/react": "file:./vendor/sheet-react-0.1.0-beta.1.tgz",
+    "@sheet/transport": "file:./vendor/sheet-transport-0.1.0-beta.1.tgz",
+    "@sheet/ui": "file:./vendor/sheet-ui-0.1.0-beta.1.tgz"
+  },
+  "pnpm": {
+    "overrides": {
+      "@sheet/core": "file:./vendor/sheet-core-0.1.0-beta.1.tgz",
+      "@sheet/react": "file:./vendor/sheet-react-0.1.0-beta.1.tgz",
+      "@sheet/transport": "file:./vendor/sheet-transport-0.1.0-beta.1.tgz",
+      "@sheet/ui": "file:./vendor/sheet-ui-0.1.0-beta.1.tgz"
+    }
+  }
+}
+```
+
+Run `pnpm install`, then follow the [UI setup](../ui.md) for React 19, Tailwind 4 and styles. Headless consumers can omit `@sheet/ui`. The release includes `SHA256SUMS` for verifying the downloaded files with a SHA-256 checksum tool.
+
+### Build your own archives
+
+There is no public npm installation yet. Download all four `.tgz` assets from the [beta release](https://github.com/jakubkontra/react-virtualized-spreadsheets/releases/tag/v0.1.0-beta.1), or build and pack them locally:
 
 ```bash
 pnpm -r --filter './packages/**' build
@@ -64,7 +99,7 @@ pnpm --filter @sheet/transport pack --pack-destination ../../artifacts
 pnpm --filter @sheet/ui pack --pack-destination ../../artifacts
 ```
 
-Install the resulting `sheet-*-0.1.0.tgz` files together in your consumer. Workspace dependencies become version dependencies when packed; all matching local packages must be available to the consumer. With pnpm, use overrides for transitive `@sheet/*` dependencies if it otherwise tries the public registry. The repository's `scripts/check-ui-package.mjs` shows a complete isolated tarball installation and build.
+Install the resulting `sheet-*-0.1.0-beta.1.tgz` files together in your consumer. Workspace dependencies become version dependencies when packed; all matching local packages must be available to the consumer. With pnpm, use overrides for transitive `@sheet/*` dependencies if it otherwise tries the public registry. The repository's `scripts/check-ui-package.mjs` shows a complete isolated tarball installation and build.
 
 ```bash
 pnpm test:ui-package

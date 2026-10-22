@@ -1,9 +1,10 @@
 {
   "name": "@sheet/core",
-  "version": "0.1.0",
+  "version": "0.1.0-beta.1",
   "type": "module",
   "files": [
-    "dist"
+    "dist",
+    "LICENSE"
   ],
   "sideEffects": false,
   "exports": {
@@ -14,5 +15,15 @@
   },
   "scripts": {
     "build": "tsup src/index.ts --format esm --dts --clean"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jakubkontra/react-virtualized-spreadsheets.git",
+    "directory": "packages/core"
+  },
+  "homepage": "https://jakubkontra.github.io/react-virtualized-spreadsheets/",
+  "bugs": {
+    "url": "https://github.com/jakubkontra/react-virtualized-spreadsheets/issues"
+  },
+  "license": "MIT"
 }

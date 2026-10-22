@@ -12,6 +12,7 @@ The current priority is **stability and integrations**. This is a direction for 
 - Frozen panes, sort/filter/search, typed columns, conditional formatting and selection summaries.
 - Named-view persistence adapters and independent spreadsheet instances.
 - Integration guides, local interactive examples and browser/performance checks.
+- Public GitHub beta release with package archives and a deployed documentation site.
 
 These capabilities have explicit limits. Read [performance](performance.md) and [formulas](formulas.md) before relying on Excel parity or a particular dataset size.
 
@@ -24,7 +25,7 @@ These capabilities have explicit limits. Read [performance](performance.md) and 
 | Performance             | Reproducible production benchmarks, bundle reduction and budgets on representative devices                        |
 | Accessibility           | Keyboard and screen-reader audits; visible focus and assistive-technology fixes based on findings                 |
 | Browser support         | Explicitly tested Chromium, Firefox and WebKit behavior, including large scroll extents and clipboard differences |
-| Release readiness       | Package metadata and license decision, changelog, release process and a validated public installation path        |
+| Release readiness       | Stable release process, migration policy and a public npm installation path                                       |
 
 The existence of an ARIA grid or a successful Chromium test is not a completed accessibility or cross-browser audit.
 
