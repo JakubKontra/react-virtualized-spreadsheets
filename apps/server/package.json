@@ -1,0 +1,8 @@
+{
+  "name": "@sheet/server",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@sheet/core": "workspace:*"
+  }
+}

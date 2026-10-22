@@ -1,0 +1,21 @@
+{
+  "name": "@sheet/transport",
+  "version": "0.1.0",
+  "type": "module",
+  "files": [
+    "dist"
+  ],
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts --clean --external @sheet/core"
+  },
+  "dependencies": {
+    "@sheet/core": "workspace:*"
+  }
+}

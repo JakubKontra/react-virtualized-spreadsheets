@@ -1,0 +1,26 @@
+{
+  "name": "@sheet/react",
+  "version": "0.1.0",
+  "type": "module",
+  "files": [
+    "dist"
+  ],
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts --clean --external @sheet/core"
+  },
+  "dependencies": {
+    "@sheet/core": "workspace:*",
+    "@tanstack/react-virtual": "^3.14.21"
+  },
+  "peerDependencies": {
+    "react": ">=18",
+    "react-dom": ">=18"
+  }
+}
