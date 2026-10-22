@@ -1,6 +1,7 @@
 import {
   memo,
   useEffect,
+  useId,
   useRef,
   useState,
   useSyncExternalStore,
@@ -26,6 +27,7 @@ import {
 import { SALES_COLUMNS, SALES_FORMULAS } from '../../shared/sales';
 import { ViewControls } from './ViewControls';
 import { FeatureControls } from './FeatureControls';
+import { FormulaAssist } from './FormulaAssist';
 
 const widths = [154, 130, 204, 94, 128, 112, 150, 138];
 const columnWidth = (col: number) => widths[col] ?? 132;
@@ -356,8 +358,11 @@ function Sheet({
   const saveState = useSyncExternalStore(saving.subscribe, saving.getSnapshot, saving.getSnapshot);
   const scrollRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<HTMLInputElement>(null);
+  const formulaBarRef = useRef<HTMLInputElement>(null);
+  const formulaAssistId = useId();
   const sheet = useSpreadsheet({ store, scrollRef, columnWidth });
   const { state } = sheet;
+  const showFormulaAssist = !!state.editing && sheet.draft.startsWith('=');
   const [jump, setJump] = useState('A1');
   const selected = state.active;
   useEffect(() => {
@@ -483,6 +488,10 @@ function Sheet({
         <span className="formula-symbol">ƒx</span>
         <input
           {...sheet.formulaBarProps}
+          ref={formulaBarRef}
+          aria-describedby={
+            showFormulaAssist && state.editor === 'bar' ? formulaAssistId : undefined
+          }
           placeholder={
             isRemote
               ? 'Select a calculated column to write a formula'
@@ -499,37 +508,6 @@ function Sheet({
             </span>
           )}
       </div>
-      {state.editing && sheet.draft.startsWith('=') && (
-        <div className="formula-assist" onPointerDown={(e) => e.preventDefault()}>
-          {sheet.formula.suggestions.length > 0 && (
-            <div role="listbox" aria-label="Formula functions">
-              {sheet.formula.suggestions.map((item, i) => (
-                <button
-                  key={item.name}
-                  role="option"
-                  aria-selected={i === sheet.formula.selected}
-                  onClick={() => sheet.formula.accept(i)}
-                >
-                  <strong>{item.name}</strong> {item.description}
-                </button>
-              ))}
-            </div>
-          )}
-          {sheet.formula.help && (
-            <span>
-              {sheet.formula.help.signature} · argument {sheet.formula.help.argument}
-            </span>
-          )}
-          {sheet.formula.references.map((ref, i) => (
-            <span key={i} style={{ color: ref.color }}>
-              {ref.label}
-            </span>
-          ))}
-          <small>
-            Type a function, or click and drag cells after an operator to insert a reference.
-          </small>
-        </div>
-      )}
       {state.error && (
         <div className="error-banner" role="alert">
           <span>{state.error}</span>
@@ -680,6 +658,7 @@ function Sheet({
           {state.editing && state.editor === 'cell' && (
             <input
               {...sheet.editorProps}
+              aria-describedby={showFormulaAssist ? formulaAssistId : undefined}
               type={store.columnOptions(state.editing.col)?.kind === 'date' ? 'date' : 'text'}
               list={
                 store.columnOptions(state.editing.col)?.kind === 'select'
@@ -708,6 +687,14 @@ function Sheet({
           </div>
         )}
       </div>
+      {showFormulaAssist && (
+        <FormulaAssist
+          id={formulaAssistId}
+          sheet={sheet}
+          anchorRef={state.editor === 'cell' ? editorRef : formulaBarRef}
+          scrollRef={scrollRef}
+        />
+      )}
       <div className="selection-summary" aria-live="polite">
         {sheet.summary.loading ? (
           'Calculating selection…'

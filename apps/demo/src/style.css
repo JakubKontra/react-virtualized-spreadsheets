@@ -1151,18 +1151,31 @@ button:focus-visible,
   text-align: left;
 }
 .formula-assist {
+  position: fixed;
+  z-index: 40;
+  visibility: hidden;
+  width: 320px;
+  max-height: 240px;
+  overflow: auto;
+  overscroll-behavior: contain;
   display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  align-items: center;
-  padding: 10px 16px;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px;
   background: #f8faf4;
-  border-bottom: 1px solid #dce4d5;
+  border: 1px solid #cbd8c2;
+  border-radius: 6px;
+  box-shadow: 0 4px 16px #30452620;
   font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.formula-assist > * {
+  flex-shrink: 0;
 }
 .formula-assist [role='listbox'] {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
   gap: 4px;
   width: 100%;
 }
@@ -1180,6 +1193,11 @@ button:focus-visible,
 }
 .formula-assist small {
   color: #7b8c71;
+}
+.formula-references {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
 }
 .cell.frozen-cell {
   z-index: 2;
