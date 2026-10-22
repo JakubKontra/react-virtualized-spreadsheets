@@ -154,6 +154,28 @@ export function FormulaAssist({
           {formula.help.signature} · argument {formula.help.argument}
         </span>
       )}
+      {formula.preview.length > 0 && (
+        <code className="formula-preview" aria-label="Matching parentheses">
+          {formula.preview.map((part, i) =>
+            part.paired ? <mark key={i}>{part.text}</mark> : <span key={i}>{part.text}</span>,
+          )}
+        </code>
+      )}
+      {formula.diagnostics.map((diagnostic, i) => (
+        <span key={i} className={`formula-diagnostic ${diagnostic.severity}`} aria-live="polite">
+          {diagnostic.message}
+        </span>
+      ))}
+      {formula.canToggleReference && (
+        <button
+          type="button"
+          tabIndex={-1}
+          onClick={formula.toggleAbsoluteReference}
+          title="Cycle relative and absolute references (F4)"
+        >
+          Toggle $ reference <kbd>F4</kbd>
+        </button>
+      )}
       {formula.references.length > 0 && (
         <div className="formula-references">
           {formula.references.map((ref, i) => (

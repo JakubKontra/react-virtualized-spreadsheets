@@ -9,3 +9,6 @@ export * from './view-engine';
 export * from './view-source';
 
 export * from './features';
+
+export { FORMULA_FUNCTIONS, getFormulaFunction } from './formula-functions';
+export * from './formula-editing';

@@ -66,7 +66,7 @@ test('completes a function and inserts a dragged range without committing early'
   await cell(page, 'H1').dblclick();
   const editor = page.getByRole('textbox', { name: 'Edit H1', exact: true });
   await editor.fill('=SU');
-  await expect(page.getByRole('option', { name: /SUM/ })).toBeVisible();
+  await expect(page.getByRole('option', { name: /^SUM / })).toBeVisible();
   await editor.press('Tab');
   await expect(editor).toHaveValue('=SUM(');
   const from = await cell(page, 'D1').boundingBox(),

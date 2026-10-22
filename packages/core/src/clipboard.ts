@@ -61,6 +61,8 @@ export interface ClipboardData {
   origin: Address;
   positions?: Address[][];
   inputs: CellInput[][];
+  /** Computed values captured at copy time, before TSV loses type information. */
+  values?: CellInput[][];
   tsv: string;
 }
 export function copyRange(
@@ -92,33 +94,56 @@ export function copyRange(
     values.push(valueRow);
     positions.push(positionRow);
   }
-  return { origin: position(start), positions, inputs, tsv: encodeTSV(values) };
+  return { origin: position(start), positions, inputs, values, tsv: encodeTSV(values) };
+}
+export interface PasteOptions {
+  mode?: 'all' | 'values' | 'formulas';
+  transpose?: boolean;
+  /** Only enable for a verified internal clipboard token (default true for imperative callers). */
+  useInternalFormulas?: boolean;
 }
 export function pasteCells(
   text: string,
   target: Address,
   internal?: ClipboardData | null,
   position: (address: Address) => Address = (address) => address,
+  options: PasteOptions = {},
 ): CellPatch[] {
-  const matching = internal?.tsv === text ? internal : null;
-  const rows = matching ? matching.inputs : decodeTSV(text).map((row) => row.map(parseInput));
+  const mode = options.mode ?? 'all';
+  if (!['all', 'values', 'formulas'].includes(mode)) throw new Error('Unknown paste mode');
+  const matching =
+    options.useInternalFormulas !== false && internal?.tsv === text ? internal : null;
+  const external = () => decodeTSV(text).map((row) => row.map(parseInput));
+  const rows = matching
+    ? mode === 'values'
+      ? (matching.values ?? external())
+      : matching.inputs
+    : external();
   if (rows.reduce((sum, row) => sum + row.length, 0) > 10000)
     throw new Error('Clipboard limit is 10,000 cells');
-  return rows.flatMap((row, r) =>
-    row.map((input, c) => {
-      const destination = position({ row: target.row + r, col: target.col + c });
+  const patches: CellPatch[] = [];
+  for (let r = 0; r < rows.length; r++)
+    for (let c = 0; c < rows[r].length; c++) {
+      const input = rows[r][c];
+      if (mode === 'formulas' && !(typeof input === 'string' && input.startsWith('='))) continue;
+      const address = {
+        row: target.row + (options.transpose ? c : r),
+        col: target.col + (options.transpose ? r : c),
+      };
+      const destination = position(address);
       const origin = matching?.positions?.[r]?.[c] ?? {
         row: (matching?.origin.row ?? 0) + r,
         col: (matching?.origin.col ?? 0) + c,
       };
-      return {
-        row: target.row + r,
-        col: target.col + c,
+      patches.push({
+        ...address,
         input:
-          matching && typeof input === 'string'
-            ? shiftFormula(input, destination.row - origin.row, destination.col - origin.col)
-            : input,
-      };
-    }),
-  );
+          mode === 'values' && typeof input === 'string'
+            ? "'" + input
+            : matching && typeof input === 'string'
+              ? shiftFormula(input, destination.row - origin.row, destination.col - origin.col)
+              : input,
+      });
+    }
+  return patches;
 }

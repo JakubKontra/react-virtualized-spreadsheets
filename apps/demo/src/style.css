@@ -1270,3 +1270,63 @@ button:focus-visible,
     font-size: 13px;
   }
 }
+
+.formula-preview {
+  display: block;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: #49643e;
+}
+.formula-preview mark {
+  background: #d6e9b9;
+  color: #244318;
+  border-radius: 2px;
+  font-weight: 700;
+}
+.formula-diagnostic {
+  font-size: 11px;
+  color: #738368;
+}
+.formula-diagnostic.error {
+  color: #a33132;
+}
+.formula-assist kbd {
+  float: right;
+  color: #738368;
+  font-size: 10px;
+}
+.paste-capture {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.paste-capture textarea {
+  width: 100%;
+  min-height: 90px;
+  resize: vertical;
+  font:
+    12px 'IBM Plex Mono',
+    monospace;
+}
+.paste-modes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  border: 0;
+  padding: 12px 0;
+  margin: 12px 0;
+}
+.paste-modes label,
+.paste-transpose {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.paste-modes input,
+.paste-transpose input {
+  width: auto;
+}
+.paste-preview {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}

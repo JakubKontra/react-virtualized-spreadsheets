@@ -60,6 +60,58 @@ describe('spreadsheet store', () => {
     expect(store.getSnapshot().canUndo).toBe(false);
     store.dispose();
   });
+  it('pastes typed values as one undoable transaction', async () => {
+    const { store } = fixture();
+    await store.ensureRange(top);
+    store.select({ row: 0, col: 0 });
+    store.select({ row: 0, col: 1 }, true);
+    const text = store.copy();
+    store.select({ row: 2, col: 0 });
+    await store.paste(text, { mode: 'values' });
+    await store.ensureRange(top);
+    expect(store.readCell({ row: 2, col: 1 }).input).toBe(4);
+    await store.undo();
+    await store.ensureRange(top);
+    expect(store.readCell({ row: 2, col: 0 }).value).toBe(null);
+    expect(store.readCell({ row: 2, col: 1 }).value).toBe(null);
+    await store.redo();
+    await store.ensureRange(top);
+    expect(store.readCell({ row: 2, col: 1 }).value).toBe(4);
+    store.dispose();
+  });
+  it('transposes only formulas and leaves skipped targets and history intact', async () => {
+    const { store } = fixture();
+    await store.ensureRange(top);
+    await store.edit([
+      { row: 2, col: 3, input: 77 },
+      { row: 3, col: 3, input: 88 },
+    ]);
+    await store.ensureRange(top);
+    store.select({ row: 0, col: 0 });
+    store.select({ row: 0, col: 1 }, true);
+    const text = store.copy();
+    store.select({ row: 2, col: 3 });
+    await store.paste(text, { mode: 'formulas', transpose: true });
+    await store.ensureRange(top);
+    expect(store.readCell({ row: 2, col: 3 }).value).toBe(77);
+    expect(store.readCell({ row: 3, col: 3 }).input).toBe('=C4*2');
+    await store.undo();
+    await store.ensureRange(top);
+    expect(store.readCell({ row: 3, col: 3 }).value).toBe(88);
+    await store.redo();
+    await store.ensureRange(top);
+    expect(store.readCell({ row: 3, col: 3 }).input).toBe('=C4*2');
+    store.dispose();
+  });
+  it('rejects special paste into a read-only target atomically', async () => {
+    const { store, source } = fixture();
+    await store.ensureRange(top);
+    source.isEditable = ({ col }) => col !== 1;
+    await expect(store.paste('9\t8', { mode: 'values' })).rejects.toThrow('read-only');
+    expect(store.readCell({ row: 0, col: 0 }).value).toBe(2);
+    expect(store.getSnapshot().canUndo).toBe(false);
+    store.dispose();
+  });
   it('bounds the block cache and keeps a stable snapshot for unchanged cells', async () => {
     const { source } = fixture();
     const store = createSpreadsheet({ source, maxBlocks: 2 });

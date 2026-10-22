@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { PastePanel } from './PastePanel';
 import {
   columnLabel,
   type CellKind,
@@ -43,7 +44,9 @@ export function FeatureControls({
   saving: ViewPersistenceBinding;
   onSwitchView: (id: string) => Promise<void>;
 }) {
-  const [panel, setPanel] = useState<'query' | 'format' | 'views' | 'freeze' | null>(null);
+  const [panel, setPanel] = useState<'query' | 'format' | 'views' | 'freeze' | 'paste' | null>(
+    null,
+  );
   const ref = useRef<HTMLDialogElement>(null),
     trigger = useRef<HTMLButtonElement | null>(null);
   useEffect(() => {
@@ -58,7 +61,7 @@ export function FeatureControls({
   return (
     <>
       <div className="feature-actions">
-        {(['query', 'format', 'freeze', 'views'] as const).map((key) => (
+        {(['query', 'format', 'freeze', 'paste', 'views'] as const).map((key) => (
           <button
             key={key}
             aria-haspopup="dialog"
@@ -75,7 +78,9 @@ export function FeatureControls({
                 ? 'Format'
                 : key === 'freeze'
                   ? 'Freeze'
-                  : (view.name ?? 'Views')}
+                  : key === 'paste'
+                    ? 'Paste special'
+                    : (view.name ?? 'Views')}
             {key === 'query' &&
             (view.query?.sorts?.length || view.query?.filters?.length || view.query?.search)
               ? ' •'
@@ -102,7 +107,9 @@ export function FeatureControls({
                     ? 'Column format'
                     : panel === 'freeze'
                       ? 'Freeze panes'
-                      : 'Saved views'}
+                      : panel === 'paste'
+                        ? 'Paste special'
+                        : 'Saved views'}
               </h2>
               <button aria-label="Close settings" onClick={close}>
                 ×
@@ -114,6 +121,8 @@ export function FeatureControls({
               <FormatPanel store={store} close={close} />
             ) : panel === 'freeze' ? (
               <FreezePanel store={store} close={close} />
+            ) : panel === 'paste' ? (
+              <PastePanel store={store} close={close} />
             ) : (
               <ViewsPanel store={store} saving={saving} onSwitchView={onSwitchView} close={close} />
             )}

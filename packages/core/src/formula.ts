@@ -1,3 +1,4 @@
+import { argumentError, criterionMatcher, roundNumber } from './formula-functions';
 import {
   columnLabel,
   formulaError,
@@ -220,6 +221,35 @@ export function evaluate(
     address.col >= 0 &&
     address.row < bounds.rows &&
     address.col < bounds.columns;
+  function rangeError(node: Expression): ReturnType<typeof formulaError> | null {
+    if (node.type === 'union') {
+      for (const item of node.items) {
+        const error = rangeError(item);
+        if (error) return error;
+      }
+      return null;
+    }
+    if (node.type === 'ref')
+      return valid(node.address) && present(node.address)
+        ? null
+        : formulaError('#REF!', 'Reference is outside the sheet');
+    if (node.type !== 'range') return formulaError('#VALUE!', 'Expected a cell or range');
+    return valid(node.start.address) && valid(node.end.address)
+      ? null
+      : formulaError('#REF!', 'Range is outside the sheet');
+  }
+  function* addresses(node: Expression): Generator<Address> {
+    if (node.type === 'union') {
+      for (const item of node.items) yield* addresses(item);
+    } else if (node.type === 'ref') {
+      if (present(node.address)) yield node.address;
+    } else if (node.type === 'range') {
+      const range = normalizeRange({ start: node.start.address, end: node.end.address });
+      for (let row = range.start.row; row <= range.end.row; row++)
+        for (let col = range.start.col; col <= range.end.col; col++)
+          if (present({ row, col })) yield { row, col };
+    }
+  }
   function ev(node: Expression): CellValue {
     switch (node.type) {
       case 'literal':
@@ -277,16 +307,86 @@ export function evaluate(
         return Number.isFinite(value) ? value : formulaError('#NUM!', 'Result is not finite');
       }
       case 'call': {
+        const invalidArguments = argumentError(node.name, node.args.length);
+        if (invalidArguments) return invalidArguments;
         if (node.name === 'IF') {
-          if (node.args.length < 2 || node.args.length > 3)
-            return formulaError('#VALUE!', 'IF expects 2 or 3 arguments');
           const condition = ev(node.args[0]);
           if (isError(condition)) return condition;
           return condition ? ev(node.args[1]) : node.args[2] ? ev(node.args[2]) : false;
         }
-        if (!['SUM', 'AVERAGE', 'MIN', 'MAX', 'COUNT'].includes(node.name))
-          return formulaError('#NAME?', `Unknown function ${node.name}`);
-        if (!node.args.length) return formulaError('#VALUE!', 'Expected at least one argument');
+        if (node.name === 'IFERROR') {
+          const value = ev(node.args[0]);
+          return isError(value) ? ev(node.args[1]) : value;
+        }
+        if (node.name === 'NOT') {
+          const value = ev(node.args[0]);
+          return isError(value) ? value : !value;
+        }
+        if (node.name === 'ROUND') {
+          const value = numeric(ev(node.args[0]));
+          if (isError(value)) return value;
+          const digits = numeric(ev(node.args[1]));
+          return isError(digits) ? digits : roundNumber(value, digits);
+        }
+        if (node.name === 'AND' || node.name === 'OR') {
+          let result = node.name === 'AND',
+            count = 0;
+          for (const arg of node.args) {
+            const range = arg.type === 'range' || arg.type === 'union';
+            if (range) {
+              const error = rangeError(arg);
+              if (error) return error;
+              let members = 0;
+              for (const address of addresses(arg)) {
+                members++;
+                const value = read(address);
+                if (isError(value)) return value;
+                if (typeof value !== 'number' && typeof value !== 'boolean') continue;
+                count++;
+                result = node.name === 'AND' ? result && !!value : result || !!value;
+              }
+              if (!members) return formulaError('#REF!', 'All range members were removed');
+            } else {
+              const value = ev(arg);
+              if (isError(value)) return value;
+              count++;
+              result = node.name === 'AND' ? result && !!value : result || !!value;
+            }
+          }
+          return count ? result : formulaError('#VALUE!', 'No logical values in range');
+        }
+        if (node.name === 'SUMIF' || node.name === 'COUNTIF') {
+          const range = node.args[0],
+            sumRange = node.args[2] ?? range;
+          const invalidRange =
+            rangeError(range) ?? (node.name === 'SUMIF' ? rangeError(sumRange) : null);
+          if (invalidRange) return invalidRange;
+          const criterion = ev(node.args[1]);
+          if (isError(criterion)) return criterion;
+          const matches = criterionMatcher(criterion);
+          const targets = addresses(sumRange);
+          let result = 0,
+            count = 0;
+          for (const address of addresses(range)) {
+            count++;
+            const target = node.name === 'SUMIF' ? targets.next() : null;
+            if (target?.done)
+              return formulaError('#VALUE!', 'SUMIF ranges must contain the same number of cells');
+            const value = read(address);
+            if (isError(value)) return value;
+            if (!matches(value)) continue;
+            if (node.name === 'COUNTIF') result++;
+            else {
+              const amount = sumRange === range ? value : read(target!.value!);
+              if (isError(amount)) return amount;
+              if (typeof amount === 'number') result += amount;
+            }
+          }
+          if (!count) return formulaError('#REF!', 'All range members were removed');
+          if (node.name === 'SUMIF' && !targets.next().done)
+            return formulaError('#VALUE!', 'SUMIF ranges must contain the same number of cells');
+          return Number.isFinite(result) ? result : formulaError('#NUM!', 'Result is not finite');
+        }
         let sum = 0;
         let count = 0;
         let min = Infinity;

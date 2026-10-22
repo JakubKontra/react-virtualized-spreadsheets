@@ -50,7 +50,7 @@ test('anchors to J2 without shifting the grid and follows focus into the formula
   await expect(bar).toHaveValue('=SUM');
   await expectBelow(page, bar);
   expect((await popup(page).boundingBox())!.x).toBeCloseTo((await bar.boundingBox())!.x, 0);
-  await page.getByRole('option', { name: /SUM/ }).click();
+  await page.getByRole('option', { name: /^SUM / }).click();
   await expect(bar).toBeFocused();
   await expect(bar).toHaveValue('=SUM(');
   await expect(popup(page)).toContainText('argument 1');

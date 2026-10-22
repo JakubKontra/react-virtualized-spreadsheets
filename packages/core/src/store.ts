@@ -1,5 +1,5 @@
 import { createFillPatches, parseTypedInput, type ViewSettings } from './features';
-import { copyRange, pasteCells, type ClipboardData } from './clipboard';
+import { copyRange, pasteCells, type ClipboardData, type PasteOptions } from './clipboard';
 import { shiftFormula } from './formula';
 import { ViewAxis, ViewController, type Axis, type SheetViewState, type ViewChange } from './view';
 import { mapViewFormula } from './view-formula';
@@ -697,26 +697,35 @@ export class SpreadsheetStore {
   getClipboardToken() {
     return this.clipboardToken;
   }
-  async paste(text: string, useInternalFormulas = true) {
+  async paste(text: string, options: boolean | PasteOptions = true) {
+    const settings = typeof options === 'boolean' ? { useInternalFormulas: options } : options;
+    const revision = this.state.revision,
+      viewRevision = this.state.viewRevision;
     const patches = pasteCells(
       text,
       normalizeRange(this.state.selection).start,
-      useInternalFormulas ? this.clipboard : null,
+      this.clipboard,
       (address) => {
         this.assertAddress(address);
         return this.logicalAddress(address);
       },
+      settings,
     );
     if (!patches.length) return;
     for (const patch of patches) this.assertAddress(patch);
     if (this.source.mode === 'local' || this.view)
       await this.ensureRange({
-        start: patches[0],
+        start: {
+          row: Math.min(...patches.map((p) => p.row)),
+          col: Math.min(...patches.map((p) => p.col)),
+        },
         end: {
           row: Math.max(...patches.map((p) => p.row)),
           col: Math.max(...patches.map((p) => p.col)),
         },
       });
+    if (revision !== this.state.revision || viewRevision !== this.state.viewRevision)
+      throw new Error('The sheet changed while preparing paste; try again');
     await this.edit(patches);
   }
   async clearSelection() {

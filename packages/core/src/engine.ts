@@ -151,6 +151,7 @@ export class FormulaEngine {
     const key = cellKey(address);
     if (this.cache.has(key)) return this.cache.get(key)!;
     const input = this.input(address);
+    if (typeof input === 'string' && input.startsWith("'")) return input.slice(1);
     if (typeof input !== 'string' || !input.startsWith('=')) return input;
     if (visiting.has(key)) return formulaError('#CYCLE!', 'Circular reference');
     if (visiting.size >= 256) return formulaError('#NUM!', 'Dependency depth exceeds 256');

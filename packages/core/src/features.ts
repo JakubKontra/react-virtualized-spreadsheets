@@ -160,9 +160,10 @@ export function validateCellInput(input: CellInput, option?: ColumnOptions) {
     throw new Error('Enter a valid number');
   if (option.kind === 'checkbox' && typeof input !== 'boolean')
     throw new Error('Enter TRUE or FALSE');
-  if (option.kind === 'select' && !option.options?.includes(String(input)))
+  const literal = typeof input === 'string' && input.startsWith("'") ? input.slice(1) : input;
+  if (option.kind === 'select' && !option.options?.includes(String(literal)))
     throw new Error('Choose a value from the list');
-  if (option.kind === 'date' && (typeof input !== 'string' || !isDate(input)))
+  if (option.kind === 'date' && (typeof literal !== 'string' || !isDate(literal)))
     throw new Error('Enter a date as YYYY-MM-DD');
 }
 function isDate(value: string) {
